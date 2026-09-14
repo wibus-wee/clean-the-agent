@@ -9,7 +9,7 @@ use atomic_write_file::AtomicWriteFile;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::model::{CleanupAction, CleanupActionKind, PathSnapshot};
+use crate::model::{CleanupAction, CleanupActionKind, FilePrecondition, PathSnapshot};
 
 #[derive(Debug, Error)]
 pub enum OperationError {
@@ -19,6 +19,8 @@ pub enum OperationError {
     SnapshotChanged,
     #[error("configuration changed after scanning; run scan again")]
     ContentChanged,
+    #[error("target appeared after scanning; run scan again")]
+    TargetAppeared,
     #[error("worktree has uncommitted, untracked, or ignored files")]
     DirtyWorktree,
     #[error("worktree is no longer registered with Git")]
@@ -46,6 +48,11 @@ pub fn apply_action(action: &CleanupAction) -> Result<ApplyOutcome, OperationErr
             replacement,
             ..
         } => rewrite_file(&action.path, expected_sha256, replacement),
+        CleanupActionKind::EnsureFile {
+            expected,
+            replacement,
+            ..
+        } => ensure_file(&action.path, expected, replacement),
         CleanupActionKind::RemoveGitWorktree {
             repository,
             expected,
@@ -156,6 +163,49 @@ fn rewrite_file(
     file.set_permissions(permissions)?;
     file.write_all(replacement)?;
     file.commit()?;
+    Ok(ApplyOutcome::Applied)
+}
+
+fn ensure_file(
+    path: &Path,
+    expected: &FilePrecondition,
+    replacement: &[u8],
+) -> Result<ApplyOutcome, OperationError> {
+    match expected {
+        FilePrecondition::Matches(expected_sha256) => {
+            rewrite_file(path, expected_sha256, replacement)
+        }
+        FilePrecondition::Missing => create_file(path, replacement),
+    }
+}
+
+fn create_file(path: &Path, replacement: &[u8]) -> Result<ApplyOutcome, OperationError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => return Err(OperationError::TargetAppeared),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "target has no parent directory",
+        )
+    })?;
+    fs::create_dir_all(parent)?;
+
+    // Persisting without clobbering publishes complete contents while refusing
+    // to replace a target created by an intervening writer.
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(replacement)?;
+    file.as_file().sync_all()?;
+    file.persist_noclobber(path).map_err(|error| {
+        if error.error.kind() == io::ErrorKind::AlreadyExists {
+            OperationError::TargetAppeared
+        } else {
+            error.error.into()
+        }
+    })?;
     Ok(ApplyOutcome::Applied)
 }
 

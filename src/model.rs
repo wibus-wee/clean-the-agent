@@ -64,11 +64,25 @@ pub struct PathSnapshot {
     pub bytes: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", content = "sha256", rename_all = "snake_case")]
+pub enum FilePrecondition {
+    Missing,
+    Matches(String),
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CleanupActionKind {
     RewriteFile {
         expected_sha256: String,
+        mutation_count: usize,
+        format: FileFormat,
+        #[serde(skip)]
+        replacement: Vec<u8>,
+    },
+    EnsureFile {
+        expected: FilePrecondition,
         mutation_count: usize,
         format: FileFormat,
         #[serde(skip)]

@@ -5,7 +5,10 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 use clean_any::model::{CleanupPlan, ScanReport};
 use clean_any::providers::OrcaProvider;
-use clean_any::{Engine, HomeScope, ScanContext, ScopeKind};
+use clean_any::tweaks::DisableCodexPetShortcut;
+use clean_any::{
+    ApplyReport, Engine, HomeScope, ScanContext, ScopeKind, TweakEngine, TweakReport, TweakStatus,
+};
 use serde::Serialize;
 
 #[derive(Debug, Parser)]
@@ -51,6 +54,10 @@ enum Command {
     Clean(CleanArgs),
     /// List compiled-in providers.
     Providers,
+    /// List explicitly selected preference tweaks.
+    Tweaks(OutputArgs),
+    /// Inspect and optionally apply one preference tweak.
+    Tweak(TweakArgs),
 }
 
 #[derive(Clone, Debug, Args)]
@@ -78,6 +85,23 @@ struct CleanArgs {
     output: OutputArgs,
 }
 
+#[derive(Debug, Args)]
+struct TweakArgs {
+    /// Stable tweak identifier, such as codex.disable-pet-shortcut.
+    id: String,
+
+    /// Apply the displayed tweak. Without this flag, the command is a dry run.
+    #[arg(long)]
+    apply: bool,
+
+    /// Confirm an apply operation.
+    #[arg(long, requires = "apply")]
+    yes: bool,
+
+    #[command(flatten)]
+    output: OutputArgs,
+}
+
 #[derive(Serialize)]
 struct CleanOutput<'a> {
     scan: &'a ScanReport,
@@ -85,6 +109,14 @@ struct CleanOutput<'a> {
     applied: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<&'a clean_any::ApplyReport>,
+}
+
+#[derive(Serialize)]
+struct TweakOutput<'a> {
+    report: &'a TweakReport,
+    applied: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<&'a ApplyReport>,
 }
 
 fn main() -> ExitCode {
@@ -100,11 +132,27 @@ fn main() -> ExitCode {
 fn run() -> Result<ExitCode, Box<dyn Error>> {
     let cli = Cli::parse();
     let engine = Engine::new(vec![Box::new(OrcaProvider)]);
-    if matches!(cli.command, Command::Providers) {
-        for id in engine.provider_ids() {
-            println!("{id}");
+    let tweak_engine = TweakEngine::new(vec![Box::new(DisableCodexPetShortcut)]);
+    match &cli.command {
+        Command::Providers => {
+            for id in engine.provider_ids() {
+                println!("{id}");
+            }
+            return Ok(ExitCode::SUCCESS);
         }
-        return Ok(ExitCode::SUCCESS);
+        Command::Tweaks(args) => {
+            let summaries = tweak_engine.summaries();
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&summaries)?);
+            } else {
+                for summary in summaries {
+                    println!("{}  {} — {}", summary.id, summary.product, summary.title);
+                    println!("  {}", summary.description);
+                }
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+        _ => {}
     }
 
     let mut context =
@@ -122,10 +170,10 @@ fn run() -> Result<ExitCode, Box<dyn Error>> {
             home,
             kind: ScopeKind::SshRemote,
         }));
-    let scan = engine.scan(&context, &cli.provider)?;
 
     match cli.command {
         Command::Scan(args) => {
+            let scan = engine.scan(&context, &cli.provider)?;
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&scan)?);
             } else {
@@ -137,6 +185,7 @@ fn run() -> Result<ExitCode, Box<dyn Error>> {
             if args.apply && !args.yes {
                 return Err("--apply requires --yes after reviewing the dry-run plan".into());
             }
+            let scan = engine.scan(&context, &cli.provider)?;
             let plan = Engine::plan(&scan, args.include_review);
             if !args.apply {
                 if args.output.json {
@@ -177,7 +226,84 @@ fn run() -> Result<ExitCode, Box<dyn Error>> {
                 ExitCode::SUCCESS
             })
         }
-        Command::Providers => unreachable!("handled before scanning"),
+        Command::Tweak(args) => run_tweak(&args, &tweak_engine, &context),
+        Command::Providers | Command::Tweaks(_) => unreachable!("handled before context setup"),
+    }
+}
+
+fn run_tweak(
+    args: &TweakArgs,
+    tweak_engine: &TweakEngine,
+    context: &ScanContext,
+) -> Result<ExitCode, Box<dyn Error>> {
+    if args.apply && !args.yes {
+        return Err("--apply requires --yes after reviewing the dry-run tweak".into());
+    }
+    let report = tweak_engine.inspect(&args.id, context)?;
+    if !args.apply {
+        print_tweak_output(&report, args.output.json, false, None)?;
+        if !args.output.json && report.status == TweakStatus::NeedsChange {
+            println!("Dry run only. Re-run with --apply --yes to apply this tweak.");
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let Some(action) = report.action.clone() else {
+        print_tweak_output(&report, args.output.json, false, None)?;
+        return Ok(if report.status == TweakStatus::Blocked {
+            ExitCode::from(2)
+        } else {
+            ExitCode::SUCCESS
+        });
+    };
+    let result = Engine::apply(&CleanupPlan {
+        actions: vec![action],
+        excluded_review_findings: 0,
+        reclaimable_bytes: 0,
+    });
+    let failed = result.has_failures();
+    print_tweak_output(&report, args.output.json, true, Some(&result))?;
+    if !args.output.json && !failed && report.restart_required {
+        println!("Restart Codex for the shortcut change to take effect.");
+    }
+    Ok(if failed {
+        ExitCode::from(2)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+fn print_tweak_output(
+    report: &TweakReport,
+    json: bool,
+    applied: bool,
+    result: Option<&ApplyReport>,
+) -> Result<(), serde_json::Error> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&TweakOutput {
+                report,
+                applied,
+                result,
+            })?
+        );
+    } else if let Some(result) = result {
+        print_apply(result);
+    } else {
+        print_tweak(report);
+    }
+    Ok(())
+}
+
+fn print_tweak(report: &TweakReport) {
+    println!("Tweak: {}", report.id);
+    println!("Status: {:?}", report.status);
+    println!("Target: {}", report.path.display());
+    println!("  {}", report.description);
+    println!("  {}", report.detail);
+    if report.restart_required {
+        println!("  Codex restart required after applying.");
     }
 }
 

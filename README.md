@@ -1,9 +1,11 @@
 # Clean Any
 
 Clean Any is a cross-platform Rust CLI that detects and removes artifacts and
-configuration mutations left by developer tools. Orca is the reference
-provider. Product knowledge stays behind a small provider trait; the shared
-engine only scans, plans, and applies typed cleanup actions.
+configuration mutations left by developer tools. It also offers explicitly
+selected preference tweaks for product behavior that is undesirable but is not
+garbage. Orca is the reference cleanup provider. Product knowledge stays behind
+small provider and tweak traits; the shared engine only plans and applies typed
+actions.
 
 The workflow is deliberately staged:
 
@@ -23,6 +25,7 @@ are supplied.
 | Finding model | [`src/model.rs`](./src/model.rs) | Represent ownership, safety, evidence, scope, snapshots, plans, and typed actions. |
 | Engine | [`src/engine.rs`](./src/engine.rs) | Run providers, exclude review-gated actions by default, order dependencies, and report results. |
 | Operations | [`src/operations.rs`](./src/operations.rs) | Apply hash-guarded file rewrites, snapshot-guarded removals, and guarded Git worktree removal. |
+| Tweaks | [`src/tweak.rs`](./src/tweak.rs), [`src/tweaks`](./src/tweaks) | Inspect explicit desired-state recipes without including them in automatic cleanup. |
 | Orca composition | [`src/providers/orca/mod.rs`](./src/providers/orca/mod.rs) | Compose independent Orca detectors without exposing Orca paths to the engine. |
 | Orca detectors | [`src/providers/orca`](./src/providers/orca) | Own config, state, worktree, runtime, integration, trust, skill, path, and evidence rules. |
 
@@ -61,6 +64,20 @@ cargo run -- --wsl-home /mnt/wsl/home/alice scan
 cargo run -- --remote-home /mnt/ssh/server/home/alice scan
 cargo run -- --stale-days 14 clean
 ```
+
+Preference tweaks are listed separately and run as dry-runs unless explicitly
+applied. For example, the Codex Pet tweak preserves every unrelated binding and
+writes the same null-binding form used by Codex:
+
+```console
+cargo run -- tweaks
+cargo run -- tweak codex.disable-pet-shortcut
+cargo run -- tweak codex.disable-pet-shortcut --apply --yes
+```
+
+The tweak resolves `$CODEX_HOME/keybindings.json`, or
+`~/.codex/keybindings.json` when `CODEX_HOME` is unset. It refuses malformed or
+concurrently changed files. Restart Codex after applying it.
 
 `--remote-home` does not open an SSH connection. It labels and scans a remote
 home that is directly accessible to the process. The same binary can also run
@@ -106,6 +123,11 @@ Git worktree cleanup adds further checks at apply time: the snapshot must be
 unchanged, `git status` must contain no tracked, untracked, or ignored changes,
 and Git must still register the worktree.
 
+Tweaks are never selected by `scan` or `clean`. A named tweak may create a
+configuration file only when it was absent during inspection, and fails if the
+target appears before apply. Existing files retain the same hash guard as
+cleanup rewrites.
+
 ## Adding a Provider
 
 Implement [`Provider`](./src/provider.rs), keep the product detector under
@@ -122,6 +144,10 @@ A provider owns:
 The engine owns action filtering, ordering, concurrency guards, execution, and
 reporting. Adding a provider should not add product conditions to the engine or
 operations modules.
+
+Add preference recipes through [`Tweak`](./src/tweak.rs) and register them in
+the CLI. A tweak must report whether its desired state is satisfied, needs a
+change, or is blocked; it must not appear in the automatic cleanup plan.
 
 ## Verification
 

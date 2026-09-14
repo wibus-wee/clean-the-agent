@@ -177,7 +177,7 @@ fn insert_action(
 fn action_strength(kind: &CleanupActionKind) -> u8 {
     match kind {
         CleanupActionKind::RemovePath { .. } | CleanupActionKind::RemoveGitWorktree { .. } => 2,
-        CleanupActionKind::RewriteFile { .. } => 1,
+        CleanupActionKind::RewriteFile { .. } | CleanupActionKind::EnsureFile { .. } => 1,
         CleanupActionKind::RemoveEmptyDirectory => 0,
     }
 }
@@ -207,7 +207,7 @@ fn order_actions(
 
 fn action_priority(action: &crate::model::CleanupAction) -> (u8, std::cmp::Reverse<usize>) {
     let priority = match action.kind {
-        CleanupActionKind::RewriteFile { .. } => 0,
+        CleanupActionKind::RewriteFile { .. } | CleanupActionKind::EnsureFile { .. } => 0,
         CleanupActionKind::RemoveGitWorktree { .. } => 1,
         CleanupActionKind::RemovePath { .. } => 2,
         CleanupActionKind::RemoveEmptyDirectory => 3,

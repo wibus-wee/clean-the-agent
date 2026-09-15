@@ -1,0 +1,67 @@
+name: Bug report
+description: Report incorrect detection, output, cleanup behavior, or a regression.
+title: "[bug]: "
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Cleanup false positives and unexpected changes are important. Stop applying the plan, preserve a redacted reproduction if safe, and use private vulnerability reporting instead if disclosure could put users at risk.
+  - type: input
+    id: version
+    attributes:
+      label: Clean the Agent version
+      placeholder: v0.1.0 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      options:
+        - CLI
+        - macOS GUI
+        - Build or packaging
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system
+      placeholder: macOS 14.7 arm64, Ubuntu 24.04 x86-64, or Windows 11 x86-64
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Include the command and a minimal synthetic or redacted fixture.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Redacted output
+      description: Prefer `--json` or `--verbose` output. Remove all personal and secret values.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I reproduced this with the latest release or current main branch.
+          required: true
+        - label: I removed secrets, personal data, prompts, history, and private repository details.
+          required: true

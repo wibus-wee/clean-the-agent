@@ -35,7 +35,7 @@ does not copy browser CSS values into native dialogs; macOS renders those.
 
 ## Components
 
-The primitives live in [`src/design.rs`](./src/design.rs). Business views may
+The primitives live in [`src/design`](./src/design). Business views may
 compose them but must not create competing button, badge, panel, or navigation
 styles.
 

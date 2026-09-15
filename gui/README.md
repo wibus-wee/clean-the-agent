@@ -6,8 +6,9 @@ concurrency guards, cleanup operations, and preference tweaks.
 
 | Area | Entry point | Responsibility |
 | --- | --- | --- |
-| Application | [`src/main.rs`](./src/main.rs) | Own window state, background work, native file and cleanup panels, and the macOS list-detail interface. |
-| Design language | [`DESIGN.md`](./DESIGN.md), [`src/design.rs`](./src/design.rs) | Define Geist-inspired tokens, primitives, and interaction contracts. |
+| Process entry | [`src/main.rs`](./src/main.rs) | Configure application identity, window behavior, and lifecycle entry points. |
+| Application | [`src/app`](./src/app) | Own state, background work, page views, native panels, presentation helpers, and UI tests. |
+| Design language | [`DESIGN.md`](./DESIGN.md), [`src/design`](./src/design) | Define Geist-inspired tokens, reusable components, and interaction contracts. |
 | Icon system | [`src/icons.rs`](./src/icons.rs), [`resources/icons`](./resources/icons) | Resolve native SF Symbols, retain local SVGs, and animate meaningful glyph layers. |
 | Cleanup engine | [`../src`](../src) | Detect artifacts, build safety-filtered plans, and apply guarded operations. |
 | Packaging | [`quickgui.config.ts`](./quickgui.config.ts) | Define the app name, identifier, Rust entry, and QuickGUI build target. |

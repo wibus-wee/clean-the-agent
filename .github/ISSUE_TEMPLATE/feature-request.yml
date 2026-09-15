@@ -1,0 +1,37 @@
+name: Feature request
+description: Propose a workflow, safety, platform, interface, or project improvement.
+title: "[feature]: "
+labels: [enhancement, needs-triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem should the project solve? Use the agent residue template for a specific product's leftover artifacts.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the workflow and observable result without prescribing internal code unless it matters.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and compatibility boundary
+      description: What must never be removed or changed? Which platforms and versions matter?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and pull requests for this request.
+          required: true

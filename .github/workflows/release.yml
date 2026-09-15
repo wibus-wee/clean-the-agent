@@ -1,0 +1,294 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v-prefixed tag to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  version:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      ref: ${{ steps.version.outputs.ref }}
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate tag and package versions
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          version="${tag#v}"
+          if [[ "$tag" == "$version" || ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Expected a semantic version tag such as v0.2.0 or v0.2.0-rc.1; got $tag" >&2
+            exit 1
+          fi
+
+          root_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          gui_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' gui/Cargo.toml | head -n 1)"
+          if [[ "$root_version" != "$version" || "$gui_version" != "$version" ]]; then
+            echo "Tag $tag does not match Cargo.toml ($root_version) and gui/Cargo.toml ($gui_version)." >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "ref=$tag" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  verify:
+    name: Test tagged source
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+
+      - name: Check formatting
+        run: |
+          cargo +stable fmt --all -- --check
+          cargo +stable fmt --manifest-path gui/Cargo.toml --all -- --check
+
+      - name: Run CLI checks
+        run: |
+          cargo +stable clippy --locked --all-targets --all-features -- -D warnings
+          cargo +stable test --locked --all-targets --all-features
+
+  cli:
+    name: CLI · ${{ matrix.asset_target }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rust_target: x86_64-unknown-linux-gnu
+            asset_target: linux-x64
+            archive: tar.gz
+          - os: macos-14
+            rust_target: aarch64-apple-darwin
+            asset_target: darwin-arm64
+            archive: tar.gz
+          - os: macos-14
+            rust_target: x86_64-apple-darwin
+            asset_target: darwin-x64
+            archive: tar.gz
+          - os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            asset_target: windows-x64
+            archive: zip
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+          persist-credentials: false
+
+      - name: Install Rust target
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add --toolchain stable "${{ matrix.rust_target }}"
+
+      - name: Build CLI binaries
+        shell: bash
+        run: cargo +stable build --locked --release --bins --target "${{ matrix.rust_target }}"
+
+      - name: Package Unix CLI binaries
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          asset="clean-the-agent-v${VERSION}-${{ matrix.asset_target }}"
+          mkdir -p "staging/$asset" release
+          cp "target/${{ matrix.rust_target }}/release/clean-the-agent" "staging/$asset/"
+          cp "target/${{ matrix.rust_target }}/release/clean-any" "staging/$asset/"
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            codesign --force --sign - "staging/$asset/clean-the-agent"
+            codesign --force --sign - "staging/$asset/clean-any"
+            codesign --verify --strict --verbose=2 "staging/$asset/clean-the-agent"
+            codesign --verify --strict --verbose=2 "staging/$asset/clean-any"
+          fi
+          cp LICENSE README.md "staging/$asset/"
+          tar -czf "release/$asset.tar.gz" -C staging "$asset"
+
+      - name: Package Windows CLI binaries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          $asset = "clean-the-agent-v$env:VERSION-${{ matrix.asset_target }}"
+          New-Item -ItemType Directory -Force "staging/$asset", release | Out-Null
+          Copy-Item "target/${{ matrix.rust_target }}/release/clean-the-agent.exe" "staging/$asset/"
+          Copy-Item "target/${{ matrix.rust_target }}/release/clean-any.exe" "staging/$asset/"
+          Copy-Item LICENSE, README.md "staging/$asset/"
+          Compress-Archive -Path "staging/$asset" -DestinationPath "release/$asset.zip"
+
+      - name: Upload CLI package
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-cli-${{ matrix.asset_target }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  gui:
+    name: GUI · ${{ matrix.asset_target }}
+    needs: version
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rust_target: aarch64-apple-darwin
+            quickgui_target: darwin-arm64
+            asset_target: darwin-arm64
+          - rust_target: x86_64-apple-darwin
+            quickgui_target: darwin-x64
+            asset_target: darwin-x64
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+          persist-credentials: false
+
+      - name: Install Rust target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add --toolchain stable "${{ matrix.rust_target }}"
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: gui/package.json
+
+      - name: Install locked GUI dependencies
+        working-directory: gui
+        run: bun ci
+
+      - name: Build with an explicit ad-hoc identity
+        working-directory: gui
+        run: bun run build -- --target "${{ matrix.quickgui_target }}" --sign -
+
+      - name: Verify and package the signed app
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          output="gui/dist/${{ matrix.quickgui_target }}"
+          app="$output/Clean-the-Agent.app"
+          dmg="$output/Clean the Agent ${VERSION}.dmg"
+
+          codesign --verify --deep --strict --verbose=2 "$app"
+          app_signature="$(codesign -dv --verbose=4 "$app" 2>&1)"
+          grep -F 'Signature=adhoc' <<< "$app_signature"
+          codesign --force --sign - "$dmg"
+          codesign --verify --strict --verbose=2 "$dmg"
+          dmg_signature="$(codesign -dv --verbose=4 "$dmg" 2>&1)"
+          grep -F 'Signature=adhoc' <<< "$dmg_signature"
+
+          mkdir -p release
+          mv "$dmg" "release/clean-the-agent-gui-v${VERSION}-${{ matrix.asset_target }}.dmg"
+
+      - name: Upload GUI package
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-gui-${{ matrix.asset_target }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [version, verify, cli, gui]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out release metadata
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+          persist-credentials: false
+
+      - name: Download release packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums and release notes
+        shell: bash
+        env:
+          TAG: ${{ needs.version.outputs.ref }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum ./* > SHA256SUMS.txt
+          cd ..
+          sed -e "s/@TAG@/$TAG/g" -e "s/@VERSION@/$VERSION/g" \
+            .github/release-body.md > release-notes.md
+
+      - name: Publish release and assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.ref }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          args=(
+            "$TAG"
+            release-assets/*
+            --verify-tag
+            --title "$TAG"
+            --notes "$(cat release-notes.md)"
+            --generate-notes
+          )
+          if [[ "$PRERELEASE" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "${args[@]}"

@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Formatting, clippy, and docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+
+      - name: Check formatting
+        run: |
+          cargo +stable fmt --all -- --check
+          cargo +stable fmt --manifest-path gui/Cargo.toml --all -- --check
+
+      - name: Run clippy
+        run: cargo +stable clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Build documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo +stable doc --locked --no-deps
+
+  minimum-rust:
+    name: Minimum Rust 1.88
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install the declared minimum Rust version
+        run: rustup toolchain install 1.88.0 --profile minimal
+
+      - name: Check the CLI at MSRV
+        run: cargo +1.88.0 check --locked --all-targets --all-features
+
+  cli:
+    name: CLI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        shell: bash
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Build release binaries
+        shell: bash
+        run: cargo +stable build --locked --release --bins
+
+      - name: Run tests
+        shell: bash
+        run: cargo +stable test --locked --all-targets --all-features
+
+  gui:
+    name: macOS GUI
+    runs-on: macos-14
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust and GUI components
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.90.0
+          rustup target add --toolchain 1.90.0 aarch64-apple-darwin
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: gui/package.json
+
+      - name: Install locked GUI dependencies
+        working-directory: gui
+        run: bun ci
+
+      - name: Check the GUI
+        working-directory: gui
+        run: bun run check
+
+      - name: Run GUI tests
+        working-directory: gui
+        run: bun run test
+
+      - name: Run GUI clippy
+        run: cargo +1.90.0 clippy --manifest-path gui/Cargo.toml --locked --all-targets --all-features -- -D warnings
+
+      - name: Build the ad-hoc signed application
+        working-directory: gui
+        run: bun run build -- --target darwin-arm64 --sign -
+
+      - name: Verify the app signature
+        working-directory: gui
+        run: |
+          app="dist/darwin-arm64/Clean-the-Agent.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          signature="$(codesign -dv --verbose=4 "$app" 2>&1)"
+          grep -F 'Signature=adhoc' <<< "$signature"

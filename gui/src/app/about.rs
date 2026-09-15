@@ -1,7 +1,48 @@
 use super::*;
 
 impl CleanerApp {
-    pub(super) fn render_about(&self, theme: Theme) -> Element {
+    pub(super) fn render_about(&self, cx: &mut ViewContext<'_, Self>, theme: Theme) -> Element {
+        let available = self.update_status.available().cloned();
+        let update_action = cx.listener("update-action", move |this, cx: &mut EventContext| {
+            let Some(update) = available.clone() else {
+                this.schedule_update_check();
+                cx.invalidate();
+                return;
+            };
+            let options = MessageBoxOptions::new(format!("Install version {}?", update.version))
+                .level(PromptLevel::Info)
+                .detail(
+                    "The signed update will replace this application and restart it. If the app is running from the disk image, move it to Applications first.",
+                )
+                .buttons([
+                    PromptButton::cancel("Cancel"),
+                    PromptButton::ok("Install and Restart"),
+                ])
+                .default_button(1)
+                .cancel_button(0);
+            match cx.message_box(options) {
+                Ok(response) => match cx.spawn(
+                    |task_cx: AsyncViewContext<CleanerApp>| async move {
+                        if let Ok(answer) = response.await
+                            && answer.button == 1
+                        {
+                            let _ = task_cx
+                                .update(move |view, cx| {
+                                    view.pending_update_install = Some(update);
+                                    cx.invalidate();
+                                })
+                                .await;
+                        }
+                    },
+                ) {
+                    Ok(task) => task.detach(),
+                    Err(error) => this.update_status = UpdateStatus::Failed(error.to_string()),
+                },
+                Err(error) => this.update_status = UpdateStatus::Failed(error.to_string()),
+            }
+            cx.invalidate();
+        });
+
         div()
             .id("about-page")
             .size_full()
@@ -15,7 +56,7 @@ impl CleanerApp {
                     .max_w(620.0)
                     .mx_auto()
                     .flex_col()
-                    .gap_4()
+                    .gap_3()
                     .child(
                         div()
                             .id("about-hero")
@@ -25,7 +66,7 @@ impl CleanerApp {
                             .text_center()
                             .gap_2()
                             .child(
-                                provider_icon(app_icon(), 84.0, 21.0).id("about-app-icon"),
+                                provider_icon(app_icon(), 80.0, 20.0).id("about-app-icon"),
                             )
                             .child(text("Clean the Agent").text_2xl().font_semibold())
                             .child(
@@ -129,16 +170,65 @@ impl CleanerApp {
                         div()
                             .id("about-application")
                             .w_full()
+                            .h(48.0)
                             .flex_none()
+                            .px_2()
                             .flex()
                             .items_center()
-                            .justify_center()
-                            .gap_2()
-                            .text_size(11.0)
-                            .text_color(theme.secondary_text)
-                            .child(text("dev.cleantheagent.app").font_family("Geist Mono"))
-                            .child("·")
-                            .child("QuickGUI 0.1.4 · Rust"),
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .min_w(0.0)
+                                    .flex_col()
+                                    .child(
+                                        text("dev.cleantheagent.app · QuickGUI 0.1.4 · Rust")
+                                            .font_family("Geist Mono")
+                                            .text_size(11.0)
+                                            .text_color(theme.secondary_text),
+                                    )
+                                    .child(
+                                        text(format!(
+                                            "{} updates · {}",
+                                            if updater::beta_channel() {
+                                                "Beta"
+                                            } else {
+                                                "Stable"
+                                            },
+                                            updater::update_status_text(&self.update_status)
+                                        ))
+                                        .text_size(10.0)
+                                        .text_color(theme.secondary_text)
+                                        .truncate(),
+                                    ),
+                            )
+                            .child(
+                                button()
+                                    .h(26.0)
+                                    .px_2()
+                                    .flex_none()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(7.0)
+                                    .border(1.0, theme.separator)
+                                    .bg(theme.control)
+                                    .text_size(11.0)
+                                    .font_medium()
+                                    .text_color(theme.text)
+                                    .app_region_no_drag()
+                                    .disabled(self.update_status.busy())
+                                    .when(self.update_status.busy(), |button| {
+                                        button.opacity(0.55)
+                                    })
+                                    .when(!self.update_status.busy(), |button| {
+                                        button.cursor_pointer().hover(|style| {
+                                            style.bg(theme.control_hover)
+                                        })
+                                    })
+                                    .on_click(update_action)
+                                    .child(updater::update_action_label(&self.update_status)),
+                            ),
                     ),
             )
     }

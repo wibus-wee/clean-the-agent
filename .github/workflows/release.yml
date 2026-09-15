@@ -181,9 +181,11 @@ jobs:
           - rust_target: aarch64-apple-darwin
             quickgui_target: darwin-arm64
             asset_target: darwin-arm64
+            updater_target: darwin-aarch64
           - rust_target: x86_64-apple-darwin
             quickgui_target: darwin-x64
             asset_target: darwin-x64
+            updater_target: darwin-x86_64
     steps:
       - name: Check out the tagged source
         uses: actions/checkout@v7
@@ -206,9 +208,33 @@ jobs:
         working-directory: gui
         run: bun ci
 
-      - name: Build with an explicit ad-hoc identity
+      - name: Install update signing tool
+        run: brew install minisign
+
+      - name: Restore the update signing key
+        shell: bash
+        env:
+          UPDATE_KEY_B64: ${{ secrets.QUICKGUI_MINISIGN_SECRET_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$UPDATE_KEY_B64" ]]; then
+            echo "Repository secret QUICKGUI_MINISIGN_SECRET_KEY_B64 is required." >&2
+            exit 1
+          fi
+          key_path="$RUNNER_TEMP/quickgui-update.key"
+          printf '%s' "$UPDATE_KEY_B64" | base64 -D > "$key_path"
+          chmod 600 "$key_path"
+          echo "QUICKGUI_MINISIGN_SECRET_KEY=$key_path" >> "$GITHUB_ENV"
+
+      - name: Build, ad-hoc sign, and generate signed update metadata
         working-directory: gui
-        run: bun run build -- --target "${{ matrix.quickgui_target }}" --sign -
+        run: |
+          bun run build -- \
+            --target "${{ matrix.quickgui_target }}" \
+            --sign - \
+            --update-manifest \
+            --update-base-url \
+            "https://github.com/wibus-wee/clean-the-agent/releases/download/${{ needs.version.outputs.ref }}"
 
       - name: Verify and package the signed app
         shell: bash
@@ -219,6 +245,10 @@ jobs:
           output="gui/dist/${{ matrix.quickgui_target }}"
           app="$output/Clean-the-Agent.app"
           dmg="$output/Clean the Agent ${VERSION}.dmg"
+          update_archive="$output/Clean-the-Agent.app.tar.gz"
+          update_target="${{ matrix.updater_target }}"
+          update_name="clean-the-agent-gui-v${VERSION}-${{ matrix.asset_target }}.app.tar.gz"
+          update_url="https://github.com/wibus-wee/clean-the-agent/releases/download/${{ needs.version.outputs.ref }}/$update_name"
 
           codesign --verify --deep --strict --verbose=2 "$app"
           app_signature="$(codesign -dv --verbose=4 "$app" 2>&1)"
@@ -230,6 +260,17 @@ jobs:
 
           mkdir -p release
           mv "$dmg" "release/clean-the-agent-gui-v${VERSION}-${{ matrix.asset_target }}.dmg"
+          mv "$update_archive" "release/$update_name"
+          jq --arg target "$update_target" --arg url "$update_url" \
+            '.platforms[$target].url = $url' "$output/latest.json" \
+            > "release/latest-$update_target.json"
+
+          signature="$RUNNER_TEMP/$update_target.minisig"
+          jq -r --arg target "$update_target" '.platforms[$target].signature' \
+            "release/latest-$update_target.json" | base64 -D > "$signature"
+          minisign -Vm "release/$update_name" \
+            -P 'RWTqQoEXz17+ylukrN57OdRSe7HY3F42mUBRe8/xERyyJVzacIGrn+Et' \
+            -x "$signature"
 
       - name: Upload GUI package
         uses: actions/upload-artifact@v7
@@ -292,3 +333,19 @@ jobs:
             args+=(--prerelease)
           fi
           gh release create "${args[@]}"
+
+      - name: Point beta installs at the newest beta-channel release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.ref }}
+        run: |
+          set -euo pipefail
+          if ! gh release view updater-beta >/dev/null 2>&1; then
+            gh release create updater-beta \
+              --target "$TAG" \
+              --title "Updater metadata · beta channel" \
+              --notes "Machine-readable manifests for beta-channel application updates." \
+              --prerelease
+          fi
+          gh release upload updater-beta release-assets/latest-darwin-*.json --clobber

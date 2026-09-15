@@ -142,6 +142,13 @@ notarized because the project does not currently have the required signing
 identity and notarization credentials. Each release body includes checksum,
 signature inspection, Gatekeeper/quarantine, and CLI installation scripts.
 
+The GUI checks a signed update manifest in the background and asks before it
+downloads, verifies, installs, and restarts. Stable builds follow stable GitHub
+Releases; prerelease builds such as `v0.2.0-beta.1` follow the beta channel and
+may later update to the corresponding stable release. Update archives use a
+separate Minisign trust key, so their integrity does not depend on Apple
+notarization or the ad-hoc application signature.
+
 ## License
 
 [MIT](./LICENSE)

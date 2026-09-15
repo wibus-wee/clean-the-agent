@@ -11,6 +11,21 @@
 
 `SHA256SUMS.txt` contains the checksum for every package.
 
+## Application updates
+
+Installed GUI builds check for signed updates in the background and always ask
+before replacing the application and restarting. Stable builds receive stable
+releases. Builds whose version contains a prerelease suffix, including
+`-beta.1` and `-rc.1`, follow the beta channel and may update to the final stable
+release.
+
+The updater verifies its application archive with the project's embedded
+Minisign public key before installation. This protects the update payload, but
+it does not provide an Apple Developer ID identity or an Apple notarization
+ticket. The first downloaded installation can still require the Gatekeeper
+steps below. Run the app from `/Applications`, not from the mounted DMG, before
+installing an in-app update.
+
 ## macOS signing and Gatekeeper
 
 The macOS application, disk image, and CLI binaries are **ad-hoc signed but not

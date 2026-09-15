@@ -363,91 +363,109 @@ pub(super) fn mock_orca_report(with_warnings: bool) -> ScanReport {
     } else {
         Vec::new()
     };
-    ScanReport {
-        findings: vec![
-            mock_finding(
-                "cache",
-                ArtifactKind::Cache,
-                Ownership::ProviderOwned,
-                Safety::Automatic,
-                "/Users/demo/Library/Caches/com.orca.agent",
-                "Orca download and model metadata cache.",
-                "The directory contains Orca's provider marker and cache manifest.",
-                842 * MB,
-            ),
-            mock_finding(
-                "logs",
-                ArtifactKind::Log,
-                Ownership::ProviderOwned,
-                Safety::Automatic,
-                "/Users/demo/Library/Logs/Orca",
-                "Rotated agent and extension logs.",
-                "Every file is located below Orca's owned logging root.",
-                286 * MB,
-            ),
-            mock_finding(
-                "worktree",
-                ArtifactKind::Worktree,
-                Ownership::Attributed,
-                Safety::ReviewRequired,
-                "/Users/demo/Projects/.orca/worktrees/stale-feature",
-                "A detached worktree from a completed agent task.",
-                "Orca metadata attributes the worktree to a finished task, but uncommitted files remain.",
-                1_420 * MB,
-            ),
-            mock_finding(
-                "hook",
-                ArtifactKind::ManagedHook,
-                Ownership::InjectedByProvider,
-                Safety::ReviewRequired,
-                "/Users/demo/Projects/atlas/.git/hooks/post-checkout",
-                "A Git hook installed by Orca.",
-                "The hook contains Orca's managed block alongside user-authored commands.",
-                8 * 1024,
-            ),
-            mock_finding(
-                "runtime",
-                ArtifactKind::RuntimeState,
-                Ownership::ProviderOwned,
-                Safety::Automatic,
-                "/Users/demo/.orca/runtime/sessions",
-                "Completed local agent session state.",
-                "Session leases are closed and the runtime index has no active references.",
-                96 * MB,
-            ),
-            mock_finding(
-                "history",
-                ArtifactKind::UserHistory,
-                Ownership::Attributed,
-                Safety::ReviewRequired,
-                "/Users/demo/.orca/history.jsonl",
-                "Prompt and command history retained by Orca.",
-                "The file is user history, so Clean the Agent requires explicit review before removal.",
-                18 * MB,
-            ),
-            mock_finding(
-                "skill",
-                ArtifactKind::SkillPlacement,
-                Ownership::InjectedByProvider,
-                Safety::Automatic,
-                "/Users/demo/.agents/skills/orca-legacy",
-                "An obsolete Orca-managed skill installation.",
-                "Its manifest points to a provider version that is no longer installed.",
-                3 * MB,
-            ),
-            mock_finding(
-                "remote",
-                ArtifactKind::RemoteRuntime,
-                Ownership::Attributed,
-                Safety::ReviewRequired,
-                "/Volumes/dev-home/.orca/runtime",
-                "Inactive runtime state from a mounted development host.",
-                "The remote lease is expired, but the host is currently offline.",
-                614 * MB,
-            ),
-        ],
-        warnings,
+    let mut findings = vec![
+        mock_finding(
+            "cache",
+            ArtifactKind::Cache,
+            Ownership::ProviderOwned,
+            Safety::Automatic,
+            "/Users/demo/Library/Caches/com.orca.agent",
+            "Orca download and model metadata cache.",
+            "The directory contains Orca's provider marker and cache manifest.",
+            842 * MB,
+        ),
+        mock_finding(
+            "logs",
+            ArtifactKind::Log,
+            Ownership::ProviderOwned,
+            Safety::Automatic,
+            "/Users/demo/Library/Logs/Orca",
+            "Rotated agent and extension logs.",
+            "Every file is located below Orca's owned logging root.",
+            286 * MB,
+        ),
+        mock_finding(
+            "worktree",
+            ArtifactKind::Worktree,
+            Ownership::Attributed,
+            Safety::ReviewRequired,
+            "/Users/demo/Projects/.orca/worktrees/stale-feature",
+            "A detached worktree from a completed agent task.",
+            "Orca metadata attributes the worktree to a finished task, but uncommitted files remain.",
+            1_420 * MB,
+        ),
+        mock_finding(
+            "hook",
+            ArtifactKind::ConfigMutation,
+            Ownership::InjectedByProvider,
+            Safety::ReviewRequired,
+            "/Users/demo/.claude/settings.json",
+            "Orca hook entries in Claude settings.",
+            "The configuration contains Orca-managed hook entries alongside user settings.",
+            8 * 1024,
+        ),
+        mock_finding(
+            "runtime",
+            ArtifactKind::RuntimeState,
+            Ownership::ProviderOwned,
+            Safety::Automatic,
+            "/Users/demo/.orca/runtime/sessions",
+            "Completed local agent session state.",
+            "Session leases are closed and the runtime index has no active references.",
+            96 * MB,
+        ),
+        mock_finding(
+            "history",
+            ArtifactKind::UserHistory,
+            Ownership::Attributed,
+            Safety::ReviewRequired,
+            "/Users/demo/.orca/history.jsonl",
+            "Prompt and command history retained by Orca.",
+            "The file is user history, so Clean the Agent requires explicit review before removal.",
+            18 * MB,
+        ),
+        mock_finding(
+            "skill",
+            ArtifactKind::SkillPlacement,
+            Ownership::InjectedByProvider,
+            Safety::Automatic,
+            "/Users/demo/.agents/skills/orca-legacy",
+            "An obsolete Orca-managed skill installation.",
+            "Its manifest points to a provider version that is no longer installed.",
+            3 * MB,
+        ),
+        mock_finding(
+            "remote",
+            ArtifactKind::RemoteRuntime,
+            Ownership::Attributed,
+            Safety::ReviewRequired,
+            "/Volumes/dev-home/.orca/runtime",
+            "Inactive runtime state from a mounted development host.",
+            "The remote lease is expired, but the host is currently offline.",
+            614 * MB,
+        ),
+    ];
+    if let Some(action) = findings[2].action.as_mut() {
+        action.kind = CleanupActionKind::RemoveGitWorktree {
+            repository: PathBuf::from("/Users/demo/Projects/atlas"),
+            expected: PathSnapshot {
+                digest: "0".repeat(64),
+                entries: 24,
+                bytes: 1_420 * MB,
+            },
+        };
+        action.description = "remove the stale Orca Git worktree".to_owned();
     }
+    if let Some(action) = findings[3].action.as_mut() {
+        action.kind = CleanupActionKind::RewriteFile {
+            expected_sha256: "0".repeat(64),
+            mutation_count: 2,
+            format: FileFormat::Json,
+            replacement: b"{}\n".to_vec(),
+        };
+        action.description = "remove two Orca-managed Claude hook entries".to_owned();
+    }
+    ScanReport { findings, warnings }
 }
 
 pub(super) fn mock_codex_report(status: TweakStatus) -> TweakReport {

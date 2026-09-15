@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 clean-any = { package = "clean-the-agent", path = ".." }
-quickgui = "0.1.4-next.4"
+quickgui = { version = "0.1.4-next.4", features = ["updater"] }
 
 [dev-dependencies]
 quickgui = { version = "0.1.4-next.4", features = ["test-support"] }

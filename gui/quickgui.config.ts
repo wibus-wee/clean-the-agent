@@ -20,4 +20,7 @@ export default defineConfig({
     "node_modules/geist/dist/fonts/geist-sans/Geist-Variable.ttf",
     "node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.ttf",
   ],
+  updates: {
+    baseUrl: "https://github.com/wibus-wee/clean-the-agent/releases/latest/download",
+  },
 });

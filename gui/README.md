@@ -11,6 +11,7 @@ concurrency guards, cleanup operations, and preference tweaks.
 | Design language | [`DESIGN.md`](./DESIGN.md), [`src/design`](./src/design) | Define Geist-inspired tokens, reusable components, and interaction contracts. |
 | Icon system | [`src/icons.rs`](./src/icons.rs), [`resources/icons`](./resources/icons) | Resolve native SF Symbols, retain local SVGs, and animate meaningful glyph layers. |
 | Cleanup engine | [`../src`](../src) | Detect artifacts, build safety-filtered plans, and apply guarded operations. |
+| Application updater | [`src/app/updater.rs`](./src/app/updater.rs) | Select the stable or beta feed, verify Minisign metadata, atomically replace the app, and request an orderly restart. |
 | Packaging | [`quickgui.config.ts`](./quickgui.config.ts) | Define the app name, identifier, Rust entry, and QuickGUI build target. |
 
 ## Run
@@ -49,6 +50,14 @@ progress and then resolves in place. The toast surface animates in and out, its
 loading glyph rotates independently, and success feedback dismisses
 automatically; skipped or failed operations also retain their detailed result
 panel.
+
+Production builds check the target-specific GitHub Releases manifest at launch.
+Stable versions ignore prereleases; versions with a semantic-version
+prerelease suffix use the rolling beta manifest. An available update is shown
+in About and is installed only after confirmation. QuickGUI downloads and
+Minisign-verifies the update archive before atomically replacing the current
+`.app` and requesting an orderly restart. The replacement requires a writable
+installation, so users must move the app out of its read-only DMG first.
 
 ## Verify
 

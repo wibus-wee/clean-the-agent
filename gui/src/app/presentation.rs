@@ -299,9 +299,96 @@ pub(super) fn scan_outcome_panel(
         )
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FindingGroup {
+    PermanentDelete,
+    ConfigurationEdit,
+    ExcludedBySelection,
+    NeedsReview,
+    ReportedOnly,
+    ExcludedByScope,
+}
+
+impl FindingGroup {
+    pub(super) const ALL: [Self; 6] = [
+        Self::PermanentDelete,
+        Self::ConfigurationEdit,
+        Self::ExcludedBySelection,
+        Self::NeedsReview,
+        Self::ReportedOnly,
+        Self::ExcludedByScope,
+    ];
+
+    pub(super) const fn title(self) -> &'static str {
+        match self {
+            Self::PermanentDelete => "Will be permanently deleted",
+            Self::ConfigurationEdit => "Configuration files to be edited",
+            Self::ExcludedBySelection => "Excluded by you",
+            Self::NeedsReview => "Needs your review",
+            Self::ReportedOnly => "Reported only",
+            Self::ExcludedByScope => "Excluded by cleanup scope",
+        }
+    }
+
+    pub(super) const fn id(self) -> &'static str {
+        match self {
+            Self::PermanentDelete => "finding-group-delete",
+            Self::ConfigurationEdit => "finding-group-edit",
+            Self::ExcludedBySelection => "finding-group-user-excluded",
+            Self::NeedsReview => "finding-group-review",
+            Self::ReportedOnly => "finding-group-info",
+            Self::ExcludedByScope => "finding-group-scope",
+        }
+    }
+
+    pub(super) const fn status(self, theme: Theme) -> (&'static str, quickgui::Color) {
+        match self {
+            Self::PermanentDelete => ("Will delete", theme.danger),
+            Self::ConfigurationEdit => ("Will edit", theme.warning),
+            Self::ExcludedBySelection => ("Not selected", theme.secondary_text),
+            Self::NeedsReview => ("Excluded", theme.warning),
+            Self::ReportedOnly => ("No changes", theme.secondary_text),
+            Self::ExcludedByScope => ("Excluded", theme.secondary_text),
+        }
+    }
+}
+
+pub(super) fn finding_group(
+    finding: &Finding,
+    included_by_scope: bool,
+    included_in_plan: bool,
+    excluded_by_selection: bool,
+) -> FindingGroup {
+    if finding.action.is_some() && !included_by_scope {
+        return FindingGroup::ExcludedByScope;
+    }
+    if finding.action.is_some() && excluded_by_selection {
+        return FindingGroup::ExcludedBySelection;
+    }
+    if finding.safety == Safety::ReviewRequired && finding.action.is_some() && !included_in_plan {
+        return FindingGroup::NeedsReview;
+    }
+    if !included_in_plan {
+        return FindingGroup::ReportedOnly;
+    }
+    match finding.action.as_ref().map(|action| &action.kind) {
+        Some(CleanupActionKind::RewriteFile { .. } | CleanupActionKind::EnsureFile { .. }) => {
+            FindingGroup::ConfigurationEdit
+        }
+        Some(
+            CleanupActionKind::RemoveGitWorktree { .. }
+            | CleanupActionKind::RemovePath { .. }
+            | CleanupActionKind::RemoveEmptyDirectory,
+        ) => FindingGroup::PermanentDelete,
+        None => FindingGroup::ReportedOnly,
+    }
+}
+
 pub(super) fn finding_row<V>(
     finding: &Finding,
+    group: FindingGroup,
     selected: bool,
+    selection: Option<(bool, bool, quickgui::ClickListener<V>)>,
     listener: quickgui::ClickListener<V>,
     theme: Theme,
 ) -> Element {
@@ -310,27 +397,18 @@ pub(super) fn finding_row<V>(
     } else {
         theme.secondary_text
     };
-    let (safety, safety_color) = safety_label_color(finding.safety, theme);
+    let (status, status_color) = group.status(theme);
     let size = if finding.reclaimable_bytes > 0 {
         human_bytes(finding.reclaimable_bytes)
     } else {
         "—".to_owned()
     };
-    button()
-        .w_full()
-        .min_h(80.0)
-        .px_3()
-        .py(10.0)
+    let content = div()
+        .min_w(0.0)
+        .flex_grow(1.0)
         .flex_col()
         .items_start()
         .gap_1()
-        .border_bottom(1.0, theme.separator)
-        .when(selected, |row| {
-            row.bg(theme.selection).text_color(theme.selection_text)
-        })
-        .when(!selected, |row| row.hover(|style| style.bg(theme.control)))
-        .cursor_pointer()
-        .on_click(listener)
         .child(
             div()
                 .w_full()
@@ -351,8 +429,8 @@ pub(super) fn finding_row<V>(
                         .flex()
                         .items_center()
                         .gap_1()
-                        .child(div().w(6.0).h(6.0).rounded_full().bg(safety_color))
-                        .child(text(safety).text_size(11.0).text_color(secondary)),
+                        .child(div().w(6.0).h(6.0).rounded_full().bg(status_color))
+                        .child(text(status).text_size(11.0).text_color(secondary)),
                 ),
         )
         .child(
@@ -387,20 +465,250 @@ pub(super) fn finding_row<V>(
                         .font_medium()
                         .text_color(secondary),
                 ),
-        )
+        );
+    let mut row = div()
+        .w_full()
+        .min_h(80.0)
+        .px_3()
+        .py(10.0)
+        .flex()
+        .items_center()
+        .gap_2()
+        .border_bottom(1.0, theme.separator)
+        .when(selected, |row| {
+            row.bg(theme.selection).text_color(theme.selection_text)
+        })
+        .when(!selected, |row| row.hover(|style| style.bg(theme.control)))
+        .cursor_pointer()
+        .on_click(listener);
+    if let Some((checked, enabled, toggle)) = selection {
+        row = row.child(
+            checkbox(checked)
+                .id(format!("toggle-finding-{}", finding.id))
+                .flex_none()
+                .w(16.0)
+                .h(16.0)
+                .rounded(4.0)
+                .border(
+                    1.0,
+                    if checked {
+                        theme.accent
+                    } else {
+                        theme.separator
+                    },
+                )
+                .bg(if checked { theme.accent } else { theme.window })
+                .text_color(theme.accent_text)
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(11.0)
+                .accessibility_label(if checked {
+                    "Exclude this finding from cleanup"
+                } else {
+                    "Include this finding in cleanup"
+                })
+                .disabled(!enabled)
+                .when(!enabled, |control| control.opacity(0.38))
+                .when(enabled, |control| control.cursor_pointer())
+                .on_click(toggle)
+                .when(checked, |control| control.child("✓")),
+        );
+    } else {
+        row = row.child(div().w(16.0).h(16.0).flex_none());
+    }
+    row.child(content)
 }
 
-pub(super) fn safety_badge(safety: Safety, theme: Theme) -> Element {
-    let (label, color) = safety_label_color(safety, theme);
+pub(super) fn safety_badge(group: FindingGroup, safety: Safety, theme: Theme) -> Element {
+    let (label, color) = match group {
+        FindingGroup::PermanentDelete | FindingGroup::ConfigurationEdit
+            if safety == Safety::Automatic =>
+        {
+            ("Included by default · proven safe", theme.success)
+        }
+        FindingGroup::PermanentDelete | FindingGroup::ConfigurationEdit => {
+            ("Included after review", theme.warning)
+        }
+        FindingGroup::ExcludedBySelection => ("Excluded by you", theme.secondary_text),
+        FindingGroup::NeedsReview => ("Needs review · excluded", theme.warning),
+        FindingGroup::ReportedOnly => ("Info only · no changes", theme.secondary_text),
+        FindingGroup::ExcludedByScope => ("Excluded by cleanup scope", theme.secondary_text),
+    };
     status_badge(label, color, theme)
 }
 
-pub(super) fn safety_label_color(safety: Safety, theme: Theme) -> (&'static str, quickgui::Color) {
-    match safety {
-        Safety::Automatic => ("Automatic", theme.success),
-        Safety::ReviewRequired => ("Review", theme.warning),
-        Safety::Informational => ("Information", theme.secondary_text),
+pub(super) fn action_consequence(finding: &Finding) -> (&'static str, String) {
+    match finding.action.as_ref().map(|action| &action.kind) {
+        Some(CleanupActionKind::RewriteFile { mutation_count, .. }) => (
+            "Edit this configuration file",
+            format!(
+                "Remove {mutation_count} Orca-managed {}. Other settings stay unchanged. The file is edited only if it still matches the scanned version.",
+                if *mutation_count == 1 { "entry" } else { "entries" }
+            ),
+        ),
+        Some(CleanupActionKind::EnsureFile { mutation_count, .. }) => (
+            "Update this configuration file",
+            format!(
+                "Apply {mutation_count} Orca-managed {} without overwriting unrelated settings or a target that changed after scanning.",
+                if *mutation_count == 1 { "entry" } else { "entries" }
+            ),
+        ),
+        Some(CleanupActionKind::RemoveGitWorktree { .. }) => (
+            "Remove this Git worktree",
+            "Git removes it permanently only if the worktree is unchanged, clean and still registered. It is not moved to Trash."
+                .to_owned(),
+        ),
+        Some(CleanupActionKind::RemovePath { expected }) if expected.entries > 1 => (
+            "Permanently delete this directory",
+            "The directory and everything inside it are deleted directly. Nothing is moved to Trash, and cleanup stops if its contents changed after scanning."
+                .to_owned(),
+        ),
+        Some(CleanupActionKind::RemovePath { .. }) => (
+            "Permanently delete this item",
+            "The item is deleted directly instead of being moved to Trash. Cleanup stops if it changed after scanning."
+                .to_owned(),
+        ),
+        Some(CleanupActionKind::RemoveEmptyDirectory) => (
+            "Delete this empty directory",
+            "The directory is deleted directly only if it is still empty. Otherwise it is safely skipped; nothing is moved to Trash."
+                .to_owned(),
+        ),
+        None => (
+            "No cleanup action",
+            "This finding is shown for context only. Clean the Agent will not change it."
+                .to_owned(),
+        ),
     }
+}
+
+pub(super) fn recognition_reason(finding: &Finding) -> &'static str {
+    match finding.ownership {
+        Ownership::ProviderOwned => {
+            "It is inside an Orca-owned location and matches a known Orca artifact."
+        }
+        Ownership::InjectedByProvider => {
+            "The file contains entries marked as Orca-managed; unrelated content is outside this finding."
+        }
+        Ownership::Attributed => {
+            "Orca state links this item to a recorded Orca task, workspace or installation."
+        }
+    }
+}
+
+pub(super) fn cleanup_plan_summary(
+    report: &ScanReport,
+    plan: &CleanupPlan,
+    user_excluded: usize,
+    theme: Theme,
+) -> Element {
+    let deleted = plan
+        .actions
+        .iter()
+        .filter(|action| {
+            matches!(
+                action.kind,
+                CleanupActionKind::RemoveGitWorktree { .. }
+                    | CleanupActionKind::RemovePath { .. }
+                    | CleanupActionKind::RemoveEmptyDirectory
+            )
+        })
+        .count();
+    let edited = plan.actions.len().saturating_sub(deleted);
+    let informational = report
+        .findings
+        .iter()
+        .filter(|finding| finding.safety == Safety::Informational || finding.action.is_none())
+        .count();
+
+    div()
+        .id("cleanup-plan")
+        .w_full()
+        .py(12.0)
+        .border_top(1.0, theme.separator)
+        .border_bottom(1.0, theme.separator)
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(text("Cleanup plan").text_size(14.0).font_semibold())
+                .child(
+                    text(human_bytes(plan.reclaimable_bytes))
+                        .text_size(12.0)
+                        .font_medium()
+                        .text_color(theme.secondary_text),
+                ),
+        )
+        .child(
+            div()
+                .grid()
+                .grid_cols(2)
+                .gap_2()
+                .child(plan_summary_line(
+                    theme.danger,
+                    format!(
+                        "{deleted} {} will be permanently deleted",
+                        plural(deleted, "item", "items")
+                    ),
+                    theme,
+                ))
+                .child(plan_summary_line(
+                    theme.warning,
+                    format!(
+                        "{edited} configuration {} will be edited",
+                        plural(edited, "file", "files")
+                    ),
+                    theme,
+                ))
+                .child(plan_summary_line(
+                    theme.warning,
+                    format!(
+                        "{} {} require review and are excluded",
+                        plan.excluded_review_findings,
+                        plural(plan.excluded_review_findings, "item", "items")
+                    ),
+                    theme,
+                ))
+                .child(plan_summary_line(
+                    theme.secondary_text,
+                    format!(
+                        "{informational} {} are informational only",
+                        plural(informational, "item", "items")
+                    ),
+                    theme,
+                ))
+                .child(plan_summary_line(
+                    theme.secondary_text,
+                    format!(
+                        "{user_excluded} {} excluded by you",
+                        plural(user_excluded, "item", "items")
+                    ),
+                    theme,
+                )),
+        )
+        .child(
+            text("Nothing will be moved to Trash. Cleanup cannot be undone.")
+                .text_size(11.0)
+                .font_medium()
+                .text_color(theme.danger),
+        )
+}
+
+fn plan_summary_line(color: quickgui::Color, label: String, theme: Theme) -> Element {
+    div()
+        .min_w(0.0)
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(div().w(6.0).h(6.0).flex_none().rounded_full().bg(color))
+        .child(text(label).text_size(11.0).text_color(theme.secondary_text))
+}
+
+const fn plural<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
+    if count == 1 { singular } else { plural }
 }
 
 pub(super) const fn artifact_label(kind: ArtifactKind) -> &'static str {

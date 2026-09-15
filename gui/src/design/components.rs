@@ -21,7 +21,9 @@ pub fn sidebar() -> Element {
 
 pub fn toolbar() -> Element {
     div()
+        .id("app-toolbar")
         .h(TOOLBAR_HEIGHT)
+        .flex_none()
         .px(20.0)
         .flex()
         .items_center()
@@ -259,7 +261,7 @@ pub fn review_checkbox<V>(
                         .child("✓")
                 }),
         )
-        .child("Include Items Requiring Review")
+        .child("Include items that may contain user data")
 }
 
 pub fn status_badge(label: &str, color: Color, theme: Theme) -> Element {
@@ -276,48 +278,85 @@ pub fn status_badge(label: &str, color: Color, theme: Theme) -> Element {
         .child(label)
 }
 
+pub struct CategoryTile<'a> {
+    pub title: &'a str,
+    pub detail: &'a str,
+    pub meta: String,
+    pub rules: &'a [&'a str],
+    pub selected: bool,
+    pub expanded: bool,
+    pub theme: Theme,
+}
+
 pub fn category_tile<V>(
-    title: &str,
-    detail: &str,
-    meta: String,
-    selected: bool,
-    listener: ClickListener<V>,
-    theme: Theme,
+    content: CategoryTile<'_>,
+    toggle_listener: ClickListener<V>,
+    disclosure_listener: ClickListener<V>,
 ) -> Element {
-    button()
-        .min_w(300.0)
-        .min_h(96.0)
-        .flex_grow(1.0)
-        .flex_basis(340.0)
-        .p_3()
-        .rounded(12.0)
-        .border(1.0, theme.separator)
-        .bg(if selected {
-            theme.sidebar
-        } else {
-            theme.control
-        })
+    let CategoryTile {
+        title,
+        detail,
+        meta,
+        rules,
+        selected,
+        expanded,
+        theme,
+    } = content;
+    div()
+        .w_full()
         .flex_col()
-        .items_start()
-        .justify_between()
-        .gap_2()
-        .text_left()
-        .cursor_pointer()
-        .hover(|style| style.bg(theme.control_hover))
-        .on_click(listener)
         .child(
             div()
                 .w_full()
+                .h(56.0)
+                .px_3()
                 .flex()
                 .items_center()
-                .justify_between()
-                .gap_3()
-                .child(text(title).text_size(14.0).font_semibold())
+                .gap_2()
                 .child(
-                    div()
-                        .w(18.0)
-                        .h(18.0)
-                        .rounded(6.0)
+                    button()
+                        .min_w(0.0)
+                        .flex_grow(1.0)
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_left()
+                        .cursor_pointer()
+                        .on_click(disclosure_listener)
+                        .child(
+                            text(if expanded { "⌄" } else { "›" })
+                                .w(14.0)
+                                .flex_none()
+                                .text_size(15.0)
+                                .text_color(theme.secondary_text),
+                        )
+                        .child(
+                            div()
+                                .min_w(0.0)
+                                .flex_col()
+                                .child(text(title).text_size(13.0).font_semibold())
+                                .child(
+                                    text(detail)
+                                        .text_size(11.0)
+                                        .text_color(theme.secondary_text)
+                                        .truncate(),
+                                ),
+                        )
+                        .hover(|style| style.opacity(0.68)),
+                )
+                .child(
+                    text(meta)
+                        .flex_none()
+                        .text_size(11.0)
+                        .font_medium()
+                        .text_color(theme.secondary_text),
+                )
+                .child(
+                    button()
+                        .w(24.0)
+                        .h(24.0)
+                        .flex_none()
+                        .rounded(7.0)
                         .border(
                             1.0,
                             if selected {
@@ -330,26 +369,43 @@ pub fn category_tile<V>(
                             indicator
                                 .bg(theme.accent)
                                 .text_color(theme.accent_text)
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .text_size(11.0)
                                 .child("✓")
-                        }),
+                        })
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(12.0)
+                        .cursor_pointer()
+                        .on_click(toggle_listener),
                 ),
         )
-        .child(
-            text(detail)
-                .text_size(13.0)
-                .line_height(19.0)
-                .text_color(theme.secondary_text),
-        )
-        .child(
-            text(meta)
-                .text_size(12.0)
-                .font_medium()
-                .text_color(theme.secondary_text),
-        )
+        .when(expanded, |row| {
+            row.child(
+                div()
+                    .padding(0.0, 12.0, 12.0, 40.0)
+                    .flex_col()
+                    .gap_1()
+                    .children(rules.iter().map(|rule| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .text_size(11.0)
+                            .text_color(theme.secondary_text)
+                            .child(
+                                text(if selected { "✓" } else { "—" })
+                                    .w(12.0)
+                                    .flex_none()
+                                    .text_color(if selected {
+                                        theme.success
+                                    } else {
+                                        theme.secondary_text
+                                    }),
+                            )
+                            .child(*rule)
+                    })),
+            )
+        })
 }
 
 pub fn empty_state(title: &str, detail: &str, theme: Theme) -> Element {

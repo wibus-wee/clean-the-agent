@@ -140,9 +140,21 @@ repository's [MIT License](./LICENSE) and that you will follow the
 2. Merge the version change only after CI passes.
 3. Create and push a matching tag, for example `v0.2.0`.
 4. The release workflow validates the tag, reruns tests, builds all CLI archives
-   and macOS DMGs, verifies ad-hoc signatures, creates `SHA256SUMS.txt`, and
-   publishes the GitHub Release.
+   and macOS DMGs, verifies ad-hoc and Minisign signatures, creates
+   `SHA256SUMS.txt`, and publishes the GitHub Release.
 
-Prerelease tags such as `v0.2.0-rc.1` create GitHub prereleases. The current
-macOS packages are intentionally ad-hoc signed and cannot be notarized without
-a Developer ID identity and Apple notarization credentials.
+The repository must keep `QUICKGUI_MINISIGN_SECRET_KEY_B64` as an Actions
+secret containing the base64-encoded contents of the passwordless Minisign
+secret-key file. Its matching public key is embedded in
+[`gui/src/app/updater.rs`](./gui/src/app/updater.rs). Back up the secret key in
+an access-controlled location: losing it prevents installed copies from
+trusting future updates, while replacing it requires shipping a key rotation
+through an update signed by the old key.
+
+Prerelease tags such as `v0.2.0-beta.1` create GitHub prereleases and refresh
+the `updater-beta` manifest release. Stable builds read GitHub's latest stable
+release; beta builds read that rolling beta manifest, which is also refreshed
+when the final stable version ships. The current macOS packages are
+intentionally ad-hoc signed and cannot be notarized without a Developer ID
+identity and Apple notarization credentials. Minisign protects the updater
+archive independently; it does not make the application notarized.

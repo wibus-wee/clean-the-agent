@@ -7,6 +7,7 @@ impl CleanerApp {
         let toggle_review = cx.listener("toggle-review", |this, cx: &mut EventContext| {
             if !this.busy() {
                 this.include_review = !this.include_review;
+                this.confirming_cleanup = false;
                 cx.invalidate();
             }
         });
@@ -96,6 +97,29 @@ impl CleanerApp {
         }
 
         let plan = self.cleanup_plan(report);
+        let planned_ids = plan
+            .actions
+            .iter()
+            .map(|action| action.id.as_str())
+            .collect::<HashSet<_>>();
+        let user_excluded = report
+            .findings
+            .iter()
+            .filter(|finding| {
+                let included_by_scope = CleanupCategory::ALL
+                    .iter()
+                    .find(|category| category.contains(finding.kind))
+                    .is_none_or(|category| self.category_is_included(*category));
+                let included_by_review = finding.safety == Safety::Automatic
+                    || (finding.safety == Safety::ReviewRequired && self.include_review);
+                included_by_scope
+                    && included_by_review
+                    && finding
+                        .action
+                        .as_ref()
+                        .is_some_and(|action| !planned_ids.contains(action.id.as_str()))
+            })
+            .count();
         let plan_for_click = plan.clone();
         let contains_mock_actions = plan_for_click
             .actions
@@ -119,50 +143,22 @@ impl CleanerApp {
                 cx.invalidate();
                 return;
             }
-            let action_count = plan_for_click.actions.len();
-            let detail = if this.include_review {
-                format!(
-                    "This permanently applies {action_count} cleanup actions, including items that require review. This can’t be undone."
-                )
-            } else {
-                format!(
-                    "This permanently applies {action_count} verified cleanup actions. This can’t be undone."
-                )
-            };
-            let options = MessageBoxOptions::new(format!(
-                "Clean {action_count} {}?",
-                if action_count == 1 { "Item" } else { "Items" }
-            ))
-            .level(PromptLevel::Warning)
-            .detail(detail)
-            .buttons([PromptButton::cancel("Cancel"), PromptButton::ok("Clean")])
-            .default_button(1)
-            .cancel_button(0);
-            let plan = plan_for_click.clone();
-            match cx.message_box(options) {
-                Ok(response) => match cx.spawn(
-                    |task_cx: AsyncViewContext<CleanerApp>| async move {
-                        if let Ok(answer) = response.await
-                            && answer.button == 1
-                        {
-                            let _ = task_cx
-                                .update(move |view, cx| {
-                                    view.pending_apply = Some(PendingApply::Cleanup(plan));
-                                    cx.invalidate();
-                                })
-                                .await;
-                        }
-                    },
-                ) {
-                    Ok(task) => task.detach(),
-                    Err(error) => this.error = Some(error.to_string()),
-                },
-                Err(error) => this.error = Some(error.to_string()),
+            if !this.confirming_cleanup {
+                this.confirming_cleanup = true;
+                cx.invalidate();
+                return;
             }
+            this.confirming_cleanup = false;
+            this.pending_apply = Some(PendingApply::Cleanup(plan_for_click.clone()));
+            cx.invalidate();
+        });
+        let cancel_cleanup = cx.listener("cancel-cleanup", |this, cx: &mut EventContext| {
+            this.confirming_cleanup = false;
             cx.invalidate();
         });
 
         content
+            .child(cleanup_plan_summary(report, &plan, user_excluded, theme))
             .child(
                 div()
                     .flex()
@@ -175,18 +171,34 @@ impl CleanerApp {
                         self.busy(),
                         theme,
                     ))
-                    .child(destructive_button(
-                        if self.applying {
-                            "Cleaning…".to_owned()
-                        } else if plan.actions.is_empty() {
-                            "Nothing to Clean".to_owned()
-                        } else {
-                            format!("Clean {} Items…", plan.actions.len())
-                        },
-                        clean,
-                        self.busy() || plan.actions.is_empty(),
-                        theme,
-                    )),
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .when(self.confirming_cleanup, |actions| {
+                                actions.child(toolbar_button(
+                                    "Cancel",
+                                    cancel_cleanup,
+                                    self.busy(),
+                                    theme,
+                                ))
+                            })
+                            .child(destructive_button(
+                                if self.applying {
+                                    "Cleaning…".to_owned()
+                                } else if plan.actions.is_empty() {
+                                    "Nothing to Clean".to_owned()
+                                } else if self.confirming_cleanup {
+                                    format!("Confirm Permanent Cleanup ({})", plan.actions.len())
+                                } else {
+                                    format!("Clean {} Items…", plan.actions.len())
+                                },
+                                clean,
+                                self.busy() || plan.actions.is_empty(),
+                                theme,
+                            )),
+                    ),
             )
             .child(
                 div()
@@ -197,8 +209,8 @@ impl CleanerApp {
                     .border(1.0, theme.separator)
                     .rounded(crate::design::PANEL_RADIUS)
                     .overflow_hidden()
-                    .child(self.render_finding_list(cx, report, compact, theme))
-                    .child(self.render_finding_detail(report, compact, theme)),
+                    .child(self.render_finding_list(cx, report, &plan, compact, theme))
+                    .child(self.render_finding_detail(report, &plan, compact, theme)),
             )
     }
 
@@ -222,8 +234,20 @@ impl CleanerApp {
                     if !this.busy() {
                         let index = category.index();
                         this.included_categories[index] = !this.included_categories[index];
+                        this.confirming_cleanup = false;
                         cx.invalidate();
                     }
+                },
+            );
+            let disclosure = cx.listener(
+                format!("show-category-rules-{}", category.index()),
+                move |this, cx: &mut EventContext| {
+                    this.expanded_category = if this.expanded_category == Some(category) {
+                        None
+                    } else {
+                        Some(category)
+                    };
+                    cx.invalidate();
                 },
             );
             let meta = self.report.as_ref().map_or_else(
@@ -247,13 +271,21 @@ impl CleanerApp {
                 },
             );
             category_tile(
-                category.title(),
-                category.detail(),
-                meta,
-                self.category_is_included(category),
+                crate::design::CategoryTile {
+                    title: category.title(),
+                    detail: category.detail(),
+                    meta,
+                    rules: category.rules(),
+                    selected: self.category_is_included(category),
+                    expanded: self.expanded_category == Some(category),
+                    theme,
+                },
                 toggle,
-                theme,
+                disclosure,
             )
+            .when(category.index() > 0, |tile| {
+                tile.border_top(1.0, theme.separator)
+            })
         });
 
         panel(theme)
@@ -336,7 +368,7 @@ impl CleanerApp {
                             .gap_1()
                             .child(text("Cleanup Scope").text_size(14.0).font_semibold())
                             .child(
-                                text("Choose which Orca capability domains may contribute actions to the cleanup plan.")
+                                text("These switches control what can be cleaned. All supported categories are still scanned.")
                                     .text_size(13.0)
                                     .text_color(theme.secondary_text),
                             ),
@@ -344,9 +376,10 @@ impl CleanerApp {
                     .child(
                         div()
                             .w_full()
-                            .flex()
-                            .flex_wrap()
-                            .gap_2()
+                            .overflow_hidden()
+                            .rounded(12.0)
+                            .border(1.0, theme.separator)
+                            .flex_col()
                             .children(cards),
                     ),
             )
@@ -356,19 +389,125 @@ impl CleanerApp {
         &self,
         cx: &mut ViewContext<'_, Self>,
         report: &ScanReport,
+        plan: &CleanupPlan,
         compact: bool,
         theme: Theme,
     ) -> Element {
-        let rows = report.findings.iter().enumerate().map(|(index, finding)| {
-            let select = cx.listener(
-                format!("select-finding-{index}"),
-                move |this, cx: &mut EventContext| {
-                    this.selected_finding = Some(index);
-                    cx.invalidate();
-                },
+        let planned_ids = plan
+            .actions
+            .iter()
+            .map(|action| action.id.as_str())
+            .collect::<HashSet<_>>();
+        let mut sections = Vec::new();
+        for group in FindingGroup::ALL {
+            let indices = report
+                .findings
+                .iter()
+                .enumerate()
+                .filter_map(|(index, finding)| {
+                    let included_by_scope = CleanupCategory::ALL
+                        .iter()
+                        .find(|category| category.contains(finding.kind))
+                        .is_none_or(|category| self.category_is_included(*category));
+                    let included_in_plan = finding
+                        .action
+                        .as_ref()
+                        .is_some_and(|action| planned_ids.contains(action.id.as_str()));
+                    let eligible_for_selection = included_by_scope
+                        && (finding.safety == Safety::Automatic
+                            || (finding.safety == Safety::ReviewRequired && self.include_review));
+                    let excluded_by_selection =
+                        finding.action.is_some() && eligible_for_selection && !included_in_plan;
+                    (finding_group(
+                        finding,
+                        included_by_scope,
+                        included_in_plan,
+                        excluded_by_selection,
+                    ) == group)
+                        .then_some(index)
+                })
+                .collect::<Vec<_>>();
+            if indices.is_empty() {
+                continue;
+            }
+            sections.push(
+                div()
+                    .id(group.id())
+                    .h(30.0)
+                    .px_3()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .border_bottom(1.0, theme.separator)
+                    .bg(theme.control)
+                    .child(
+                        text(group.title())
+                            .text_size(10.0)
+                            .font_semibold()
+                            .text_color(theme.secondary_text),
+                    )
+                    .child(
+                        text(indices.len().to_string())
+                            .text_size(10.0)
+                            .font_medium()
+                            .text_color(theme.secondary_text),
+                    ),
             );
-            finding_row(finding, self.selected_finding == Some(index), select, theme)
-        });
+            for index in indices {
+                let finding = &report.findings[index];
+                let included_by_scope = CleanupCategory::ALL
+                    .iter()
+                    .find(|category| category.contains(finding.kind))
+                    .is_none_or(|category| self.category_is_included(*category));
+                let included_in_plan = finding
+                    .action
+                    .as_ref()
+                    .is_some_and(|action| planned_ids.contains(action.id.as_str()));
+                let selection = finding.action.as_ref().map(|action| {
+                    let enabled = included_by_scope
+                        && (finding.safety == Safety::Automatic
+                            || (finding.safety == Safety::ReviewRequired && self.include_review))
+                        && !self.busy();
+                    let selection_ids =
+                        cleanup_selection_closure(report, &action.id, !included_in_plan);
+                    let toggle = cx.listener(
+                        format!("toggle-finding-{}", finding.id),
+                        move |this, cx: &mut EventContext| {
+                            if this.busy() || !enabled {
+                                return;
+                            }
+                            if included_in_plan {
+                                this.excluded_cleanup_actions
+                                    .extend(selection_ids.iter().cloned());
+                            } else {
+                                for id in &selection_ids {
+                                    this.excluded_cleanup_actions.remove(id);
+                                }
+                            }
+                            this.confirming_cleanup = false;
+                            cx.invalidate();
+                        },
+                    );
+                    (included_in_plan, enabled, toggle)
+                });
+                let select = cx.listener(
+                    format!("select-finding-{index}"),
+                    move |this, cx: &mut EventContext| {
+                        this.selected_finding = Some(index);
+                        cx.invalidate();
+                    },
+                );
+                sections.push(finding_row(
+                    finding,
+                    group,
+                    self.selected_finding == Some(index),
+                    selection,
+                    select,
+                    theme,
+                ));
+            }
+        }
 
         div()
             .id("finding-list")
@@ -405,11 +544,17 @@ impl CleanerApp {
                             theme,
                         ))
                     })
-                    .children(rows),
+                    .children(sections),
             )
     }
 
-    fn render_finding_detail(&self, report: &ScanReport, compact: bool, theme: Theme) -> Element {
+    fn render_finding_detail(
+        &self,
+        report: &ScanReport,
+        plan: &CleanupPlan,
+        compact: bool,
+        theme: Theme,
+    ) -> Element {
         let Some(finding) = self
             .selected_finding
             .and_then(|index| report.findings.get(index))
@@ -429,40 +574,35 @@ impl CleanerApp {
         } else {
             "Not estimated".to_owned()
         };
-        let (treatment, treatment_detail) = match finding.safety {
-            Safety::Automatic => (
-                "Ready automatically",
-                finding.action.as_ref().map_or_else(
-                    || "Reported without a cleanup action.".to_owned(),
-                    |action| {
-                        format!(
-                            "Ownership and scan-time preconditions are strong enough to {}.",
-                            action.description
-                        )
-                    },
-                ),
-            ),
-            Safety::ReviewRequired if self.include_review => (
-                "Included by review",
-                finding.action.as_ref().map_or_else(
-                    || "No cleanup action is available.".to_owned(),
-                    |action| {
-                        format!(
-                            "This item is included only because review-gated cleanup is enabled: {}.",
-                            action.description
-                        )
-                    },
-                ),
-            ),
-            Safety::ReviewRequired => (
-                "Review required",
-                "Excluded from the cleanup plan until “Include Items Requiring Review” is enabled."
-                    .to_owned(),
-            ),
-            Safety::Informational => (
-                "Reported only",
-                "Shown for visibility and context. Clean the Agent will not remove it.".to_owned(),
-            ),
+        let included = finding
+            .action
+            .as_ref()
+            .is_some_and(|action| plan.actions.iter().any(|item| item.id == action.id));
+        let included_by_scope = CleanupCategory::ALL
+            .iter()
+            .find(|category| category.contains(finding.kind))
+            .is_none_or(|category| self.category_is_included(*category));
+        let eligible_for_selection = included_by_scope
+            && (finding.safety == Safety::Automatic
+                || (finding.safety == Safety::ReviewRequired && self.include_review));
+        let group = finding_group(
+            finding,
+            included_by_scope,
+            included,
+            finding.action.is_some() && eligible_for_selection && !included,
+        );
+        let (consequence, consequence_detail) = action_consequence(finding);
+        let consequence_heading = if included {
+            "What will happen"
+        } else {
+            "What would happen"
+        };
+        let consequence_copy = if included || finding.action.is_none() {
+            format!("{consequence}. {consequence_detail}")
+        } else {
+            format!(
+                "This item is not in the current cleanup plan. If selected: {consequence}. {consequence_detail}"
+            )
         };
         let path = finding.path.display().to_string();
         let metadata = format!("{type_label} · {ownership} · {scope} · {size}");
@@ -505,7 +645,7 @@ impl CleanerApp {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(safety_badge(finding.safety, theme))
+                            .child(safety_badge(group, finding.safety, theme))
                             .child(
                                 text(metadata)
                                     .min_w(0.0)
@@ -515,20 +655,26 @@ impl CleanerApp {
                             ),
                     ),
             )
-            .child(finding_detail_section(
-                IconName::ShieldCheck,
-                "Recognition evidence",
-                &finding.evidence,
-                false,
-                theme,
-            ))
-            .child(finding_detail_section(
-                IconName::Power,
-                treatment,
-                &treatment_detail,
-                false,
-                theme,
-            ))
+            .child(
+                finding_detail_section(
+                    IconName::Power,
+                    consequence_heading,
+                    &consequence_copy,
+                    false,
+                    theme,
+                )
+                .id("finding-consequence"),
+            )
+            .child(
+                finding_detail_section(
+                    IconName::ShieldCheck,
+                    "Why it was found",
+                    recognition_reason(finding),
+                    false,
+                    theme,
+                )
+                .id("finding-recognition"),
+            )
             .child(finding_detail_section(
                 IconName::FileBraces,
                 "Exact location",
@@ -537,4 +683,35 @@ impl CleanerApp {
                 theme,
             ))
     }
+}
+
+fn cleanup_selection_closure(report: &ScanReport, action_id: &str, selecting: bool) -> Vec<String> {
+    let actions = report
+        .findings
+        .iter()
+        .filter_map(|finding| finding.action.as_ref())
+        .collect::<Vec<_>>();
+    let mut affected = HashSet::from([action_id.to_owned()]);
+
+    loop {
+        let before = affected.len();
+        for action in &actions {
+            if selecting {
+                if affected.contains(&action.id) {
+                    affected.extend(action.depends_on.iter().cloned());
+                }
+            } else if action
+                .depends_on
+                .iter()
+                .any(|dependency| affected.contains(dependency))
+            {
+                affected.insert(action.id.clone());
+            }
+        }
+        if affected.len() == before {
+            break;
+        }
+    }
+
+    affected.into_iter().collect()
 }

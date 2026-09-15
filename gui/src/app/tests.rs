@@ -1,6 +1,7 @@
 use super::{
-    ApplyCounts, ArtifactKind, CleanerApp, CleanupCategory, Page, ScanReport, TweakReport,
-    TweakStatus, UiLabScenario, apply_toast, human_bytes, humanize_debug,
+    ApplyCounts, ArtifactKind, CleanerApp, CleanupCategory, FindingGroup, Page, ScanReport,
+    TweakReport, TweakStatus, UiLabScenario, action_consequence, apply_toast, finding_group,
+    human_bytes, humanize_debug, mock_orca_report,
 };
 use quickgui::{Application, ToastKind, WindowOptions};
 
@@ -78,6 +79,58 @@ fn cleanup_categories_cover_every_detected_orca_artifact_once() {
 }
 
 #[test]
+fn cleanup_action_kinds_are_explained_as_user_visible_consequences() {
+    let report = mock_orca_report(false);
+
+    let (title, detail) = action_consequence(&report.findings[0]);
+    assert_eq!(title, "Permanently delete this directory");
+    assert!(detail.contains("Nothing is moved to Trash"));
+
+    let (title, detail) = action_consequence(&report.findings[2]);
+    assert_eq!(title, "Remove this Git worktree");
+    assert!(detail.contains("clean and still registered"));
+
+    let (title, detail) = action_consequence(&report.findings[3]);
+    assert_eq!(title, "Edit this configuration file");
+    assert!(detail.contains("2 Orca-managed entries"));
+    assert!(detail.contains("Other settings stay unchanged"));
+}
+
+#[test]
+fn findings_are_grouped_by_cleanup_consequence_instead_of_detector_safety() {
+    let report = mock_orca_report(false);
+    let default_plan = clean_any::Engine::plan(&report, false);
+    let reviewed_plan = clean_any::Engine::plan(&report, true);
+    let in_plan = |index: usize, plan: &clean_any::CleanupPlan| {
+        report.findings[index]
+            .action
+            .as_ref()
+            .is_some_and(|action| plan.actions.iter().any(|item| item.id == action.id))
+    };
+
+    assert_eq!(
+        finding_group(&report.findings[0], true, in_plan(0, &default_plan), false),
+        FindingGroup::PermanentDelete
+    );
+    assert_eq!(
+        finding_group(&report.findings[3], true, in_plan(3, &default_plan), false),
+        FindingGroup::NeedsReview
+    );
+    assert_eq!(
+        finding_group(&report.findings[3], true, in_plan(3, &reviewed_plan), false),
+        FindingGroup::ConfigurationEdit
+    );
+    assert_eq!(
+        finding_group(&report.findings[0], false, false, false),
+        FindingGroup::ExcludedByScope
+    );
+    assert_eq!(
+        finding_group(&report.findings[0], true, false, true),
+        FindingGroup::ExcludedBySelection
+    );
+}
+
+#[test]
 fn excluding_a_category_removes_its_actions_from_the_plan() {
     use clean_any::model::{CleanupAction, CleanupActionKind, Ownership, ScopeKind};
     use clean_any::{Finding, Safety};
@@ -116,6 +169,25 @@ fn excluding_a_category_removes_its_actions_from_the_plan() {
     assert_eq!(app.cleanup_plan(&report).actions.len(), 1);
     app.included_categories[CleanupCategory::AppData.index()] = false;
     assert!(app.cleanup_plan(&report).actions.is_empty());
+}
+
+#[test]
+fn excluding_a_finding_removes_only_its_action_from_the_plan() {
+    let report = mock_orca_report(false);
+    let mut app = CleanerApp::new();
+    let action_id = report.findings[0]
+        .action
+        .as_ref()
+        .expect("automatic finding action")
+        .id
+        .clone();
+
+    assert_eq!(app.cleanup_plan(&report).actions.len(), 4);
+    app.excluded_cleanup_actions.insert(action_id.clone());
+    let plan = app.cleanup_plan(&report);
+
+    assert_eq!(plan.actions.len(), 3);
+    assert!(plan.actions.iter().all(|action| action.id != action_id));
 }
 
 #[cfg(target_os = "macos")]
@@ -352,8 +424,8 @@ fn about_page_fits_the_minimum_window_without_scrolling() {
             page.height,
             sidebar.height - crate::design::TOOLBAR_HEIGHT
         );
-        assert_eq!(app_icon.width, 84.0);
-        assert_eq!(app_icon.height, 84.0);
+        assert_eq!(app_icon.width, 80.0);
+        assert_eq!(app_icon.height, 80.0);
         assert!(app_icon.x > page.x + 250.0);
         assert!(app_icon.x + app_icon.width < page.x + page.width - 250.0);
         assert_eq!(coverage.x, safety.x);
@@ -550,6 +622,51 @@ fn ui_lab_loads_an_isolated_orca_scan_preview() {
     assert_eq!(ready, 4);
 
     context
+        .click(window, "show-category-rules-2")
+        .expect("expand Integration rules");
+    assert_eq!(
+        context
+            .update(view, |view, _cx| view.expanded_category)
+            .expect("inspect category disclosure"),
+        Some(CleanupCategory::Integrations)
+    );
+    context
+        .click(window, "show-category-rules-2")
+        .expect("collapse Integration rules");
+
+    context
+        .click(window, "toggle-finding-mock-cache")
+        .expect("exclude one finding");
+    let (actions, user_excluded) = context
+        .update(view, |view, _cx| {
+            let report = view.report.as_ref().expect("mock report");
+            (
+                view.cleanup_plan(report).actions.len(),
+                view.excluded_cleanup_actions.contains("mock-action-cache"),
+            )
+        })
+        .expect("inspect per-finding selection");
+    assert_eq!(actions, 3);
+    assert!(user_excluded);
+    assert!(
+        context
+            .contains_element(window, FindingGroup::ExcludedBySelection.id())
+            .unwrap()
+    );
+    context
+        .click(window, "toggle-finding-mock-cache")
+        .expect("restore one finding");
+    assert_eq!(
+        context
+            .update(view, |view, _cx| {
+                let report = view.report.as_ref().expect("mock report");
+                view.cleanup_plan(report).actions.len()
+            })
+            .expect("inspect restored selection"),
+        4
+    );
+
+    context
         .click(window, "apply-cleanup")
         .expect("exercise mock cleanup action");
     let (pending_apply, toast_count, preview_mode) = context
@@ -568,19 +685,101 @@ fn ui_lab_loads_an_isolated_orca_scan_preview() {
     assert_eq!(toast_count, 1);
     assert!(preview_mode);
 
-    if let Ok(path) = std::env::var("CLEAN_THE_AGENT_UI_LAB_ORCA_SNAPSHOT") {
+    context
+        .simulate_retained_scroll(
+            window,
+            "page-scroll-cleanup",
+            quickgui::Vector::new(0.0, -10_000.0),
+        )
+        .expect("scroll to the consequence-based findings");
+    assert!(
+        context.contains_element(window, "cleanup-plan").unwrap(),
+        "a populated scan must expose a cleanup plan summary"
+    );
+    assert!(
         context
-            .simulate_retained_scroll(
-                window,
-                "page-scroll-cleanup",
-                quickgui::Vector::new(0.0, -10_000.0),
-            )
-            .expect("scroll to the findings preview");
+            .contains_element(window, FindingGroup::PermanentDelete.id())
+            .unwrap()
+    );
+    assert!(
+        context
+            .contains_element(window, FindingGroup::NeedsReview.id())
+            .unwrap()
+    );
+    assert!(
+        context
+            .contains_element(window, "finding-consequence")
+            .unwrap()
+    );
+    assert!(
+        context
+            .contains_element(window, "finding-recognition")
+            .unwrap()
+    );
+
+    if let Ok(path) = std::env::var("CLEAN_THE_AGENT_UI_LAB_ORCA_SNAPSHOT") {
         context
             .capture_screenshot(window)
             .expect("capture Orca preview")
             .write_png(path)
             .expect("write Orca preview snapshot");
+    }
+}
+
+#[cfg(all(target_os = "macos", debug_assertions))]
+#[test]
+fn ui_lab_review_preview_moves_configuration_changes_into_the_plan() {
+    let mut app = CleanerApp::new();
+    app.pending_scan = false;
+    let (mut context, view) = Application::new()
+        .into_test_context(WindowOptions::default().size(1120.0, 740.0), app)
+        .expect("visual test context");
+    let window = view.window_handle();
+
+    context.click(window, "show-ui-lab").expect("open UI Lab");
+    context
+        .click(window, "ui-lab-orca-warning")
+        .expect("load review preview");
+    let (include_review, actions, selected_kind) = context
+        .update(view, |view, _cx| {
+            let report = view.report.as_ref().expect("mock report");
+            (
+                view.include_review,
+                view.cleanup_plan(report).actions.len(),
+                view.selected_finding
+                    .and_then(|index| report.findings.get(index))
+                    .map(|finding| finding.kind),
+            )
+        })
+        .expect("inspect review plan");
+    assert!(include_review);
+    assert_eq!(actions, 8);
+    assert_eq!(selected_kind, Some(ArtifactKind::ConfigMutation));
+
+    context
+        .simulate_retained_scroll(
+            window,
+            "page-scroll-cleanup",
+            quickgui::Vector::new(0.0, -10_000.0),
+        )
+        .expect("scroll to reviewed cleanup plan");
+    assert!(
+        context
+            .contains_element(window, FindingGroup::ConfigurationEdit.id())
+            .unwrap()
+    );
+    assert!(
+        !context
+            .contains_element(window, FindingGroup::NeedsReview.id())
+            .unwrap()
+    );
+
+    if let Ok(path) = std::env::var("CLEAN_THE_AGENT_UI_LAB_REVIEW_SNAPSHOT") {
+        context
+            .capture_screenshot(window)
+            .expect("capture reviewed cleanup plan")
+            .write_png(path)
+            .expect("write reviewed cleanup plan snapshot");
     }
 }
 

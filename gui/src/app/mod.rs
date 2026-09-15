@@ -6,10 +6,12 @@ mod shell;
 mod tweaks;
 #[cfg(debug_assertions)]
 mod ui_lab;
+mod updater;
 
 use presentation::*;
 #[cfg(debug_assertions)]
 use ui_lab::{mock_codex_report, mock_orca_report};
+use updater::UpdateStatus;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -22,9 +24,9 @@ use crate::design::{
     sidebar_icon_row, status_badge, toolbar, toolbar_button,
 };
 use crate::icons::{IconName, animated_keyboard_icon, chatgpt_icon, icon, system_info_icon};
-use clean_any::model::{ApplyStatus, ArtifactKind, CleanupPlan};
+use clean_any::model::{ApplyStatus, ArtifactKind, CleanupActionKind, CleanupPlan};
 #[cfg(debug_assertions)]
-use clean_any::model::{CleanupAction, CleanupActionKind, PathSnapshot};
+use clean_any::model::{CleanupAction, FileFormat, PathSnapshot};
 use clean_any::providers::OrcaProvider;
 use clean_any::tweaks::DisableCodexPetShortcut;
 use clean_any::{
@@ -34,8 +36,8 @@ use clean_any::{
 use quickgui::{
     Animation, AnimationExt, AsyncViewContext, ClickListener, Element, EventContext, IntoElement,
     MessageBoxOptions, PathPromptOptions, PromptButton, PromptLevel, Toast, ToastId, ToastKind,
-    ToastManager, ToastViewport, Transition, TransitionProperties, View, ViewContext, button, div,
-    text,
+    ToastManager, ToastViewport, Transition, TransitionProperties, View, ViewContext, button,
+    checkbox, div, text,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -113,6 +115,35 @@ impl CleanupCategory {
         }
     }
 
+    const fn rules(self) -> &'static [&'static str] {
+        match self {
+            Self::AppData => &[
+                "Caches and temporary state",
+                "Rotated logs and pending-delete items",
+                "Terminal history and configuration backups",
+                "Other data inside Orca-owned roots",
+            ],
+            Self::Workspaces => &[
+                "Orca-attributed Git worktrees",
+                "Deferred worktree trash",
+                "Stale Orca provenance records",
+                "Ordinary project folders are not scanned",
+            ],
+            Self::Integrations => &[
+                "Orca-managed agent hook scripts",
+                "Claude, Codex, Cursor and other agent config entries",
+                "Workspace trust attributed to Orca",
+                "Orca-managed plugins; repository .git/hooks are not scanned",
+            ],
+            Self::AgentRuntime => &[
+                "Codex runtime resource mirrors",
+                "Completed session backfill",
+                "Verified Orca skill placements",
+                "Recognized local or supplied remote runtime residue",
+            ],
+        }
+    }
+
     const fn supported_types(self) -> usize {
         match self {
             Self::AppData => 6,
@@ -165,6 +196,8 @@ pub(crate) struct CleanerApp {
     display_home: PathBuf,
     include_review: bool,
     included_categories: [bool; 4],
+    excluded_cleanup_actions: HashSet<String>,
+    expanded_category: Option<CleanupCategory>,
     report: Option<ScanReport>,
     selected_finding: Option<usize>,
     selected_tweak: Option<usize>,
@@ -175,10 +208,14 @@ pub(crate) struct CleanerApp {
     scanning: bool,
     pending_apply: Option<PendingApply>,
     applying: bool,
+    confirming_cleanup: bool,
     preview_mode: bool,
     toasts: ToastManager,
     exiting_toasts: HashSet<ToastId>,
     toast_deadline: Option<Instant>,
+    update_status: UpdateStatus,
+    pending_update_check: bool,
+    pending_update_install: Option<quickgui::AvailableUpdate>,
 }
 
 impl CleanerApp {
@@ -197,6 +234,8 @@ impl CleanerApp {
             display_home,
             include_review: false,
             included_categories: [true; 4],
+            excluded_cleanup_actions: HashSet::new(),
+            expanded_category: None,
             report: None,
             selected_finding: None,
             selected_tweak: (!tweak_reports.is_empty()).then_some(0),
@@ -207,10 +246,14 @@ impl CleanerApp {
             scanning: false,
             pending_apply: None,
             applying: false,
+            confirming_cleanup: false,
             preview_mode: false,
             toasts: ToastManager::new().limit(3),
             exiting_toasts: HashSet::new(),
             toast_deadline: None,
+            update_status: UpdateStatus::Idle,
+            pending_update_check: !cfg!(debug_assertions),
+            pending_update_install: None,
         }
     }
 
@@ -219,6 +262,8 @@ impl CleanerApp {
     }
 
     fn schedule_scan(&mut self) {
+        self.confirming_cleanup = false;
+        self.excluded_cleanup_actions.clear();
         if self.preview_mode {
             self.preview_mode = false;
             self.scanning = false;
@@ -254,10 +299,13 @@ impl CleanerApp {
         self.scanning = scenario == UiLabScenario::OrcaScanning;
         self.pending_apply = None;
         self.applying = false;
+        self.confirming_cleanup = false;
         self.error = None;
         self.last_apply = None;
         self.include_review = false;
         self.included_categories = [true; 4];
+        self.excluded_cleanup_actions.clear();
+        self.expanded_category = None;
         self.display_home = PathBuf::from("/Users/demo");
         self.selected_finding = None;
         self.selected_tweak = None;
@@ -271,7 +319,7 @@ impl CleanerApp {
             UiLabScenario::OrcaWarning => {
                 self.page = Page::Cleanup;
                 self.report = Some(mock_orca_report(true));
-                self.selected_finding = Some(2);
+                self.selected_finding = Some(3);
                 self.include_review = true;
             }
             UiLabScenario::OrcaEmpty => {
@@ -314,10 +362,15 @@ impl CleanerApp {
                 .findings
                 .iter()
                 .filter(|finding| {
-                    CleanupCategory::ALL
+                    let included_by_category = CleanupCategory::ALL
                         .iter()
                         .find(|category| category.contains(finding.kind))
-                        .is_none_or(|category| self.category_is_included(*category))
+                        .is_none_or(|category| self.category_is_included(*category));
+                    let included_by_selection = finding
+                        .action
+                        .as_ref()
+                        .is_none_or(|action| !self.excluded_cleanup_actions.contains(&action.id));
+                    included_by_category && included_by_selection
                 })
                 .cloned()
                 .collect(),
@@ -327,6 +380,8 @@ impl CleanerApp {
     }
 
     fn start_background_work(&mut self, cx: &ViewContext<'_, Self>) {
+        self.start_update_work(cx);
+
         if self.pending_scan && !self.busy() {
             self.pending_scan = false;
             self.scanning = true;
@@ -399,6 +454,7 @@ impl CleanerApp {
                                     view.error = Some(error);
                                 }
                             } else {
+                                view.excluded_cleanup_actions.clear();
                                 view.pending_scan = true;
                             }
                         }
@@ -529,7 +585,7 @@ impl View for CleanerApp {
                 .flex_grow(1.0)
                 .min_h(0.0)
                 .overflow_hidden()
-                .child(self.render_about(theme)),
+                .child(self.render_about(cx, theme)),
         };
 
         div()

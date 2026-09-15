@@ -1,12 +1,15 @@
 ## Downloads
 
+macOS is supported. The Linux CLI is a beta distribution whose packaging and
+behavior may still change. Windows is not supported and has no official build.
+
 | Package | Platform |
 | --- | --- |
 | `clean-the-agent-gui-@TAG@-darwin-arm64.dmg` | macOS 14+, Apple silicon |
 | `clean-the-agent-gui-@TAG@-darwin-x64.dmg` | macOS 14+, Intel |
 | `clean-the-agent-@TAG@-darwin-arm64.tar.gz` | macOS CLI, Apple silicon |
 | `clean-the-agent-@TAG@-darwin-x64.tar.gz` | macOS CLI, Intel |
-| `clean-the-agent-@TAG@-linux-x64.tar.gz` | Linux CLI, x86-64 |
+| `clean-the-agent-@TAG@-linux-x64.tar.gz` | Linux CLI, x86-64 (beta) |
 
 `SHA256SUMS.txt` contains the checksum for every package.
 

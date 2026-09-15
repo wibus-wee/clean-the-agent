@@ -118,7 +118,7 @@ bun run test
 bun run build -- --sign -
 ```
 
-GitHub Actions repeats the CLI build and test suite on macOS and Linux,
+GitHub Actions repeats the CLI build and test suite on macOS and Linux (beta),
 checks the CLI's declared minimum Rust version, and packages the macOS GUI.
 Pull requests from forks receive only read access and do not require secrets.
 

@@ -10,12 +10,22 @@
     <b>Download for </b>
     <a href="https://github.com/wibus-wee/clean-the-agent/releases/latest">macOS</a>
     ·
-    <a href="https://github.com/wibus-wee/clean-the-agent/releases/latest">Linux</a>
+    <a href="https://github.com/wibus-wee/clean-the-agent/releases/latest">Linux (Beta)</a>
+    <br />
+    <sub>Windows is not supported.</sub>
     <br />
   </p>
 </p>
 
 ## Supported
+
+### Platforms
+
+| Status | Platform | Distribution |
+| --- | --- | --- |
+| ✅ Supported | macOS 14+ | Native GUI and CLI for Apple silicon and Intel |
+| 🧪 Beta | Linux x86-64 | CLI only; packaging and behavior may still change |
+| ❌ Unsupported | Windows | No official builds, testing, or support |
 
 ### Providers
 
@@ -120,7 +130,7 @@ bun run test
 bun run build -- --sign -
 ```
 
-Pull requests build and test the CLI on macOS and Linux, check the
+Pull requests build and test the CLI on macOS and Linux (beta), check the
 declared minimum Rust version, and package the macOS GUI. See the
 [GUI architecture guide](./gui/README.md) for its code map and requirements.
 

@@ -24,6 +24,8 @@ pub struct TweakReport {
     pub restart_required: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<CleanupAction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revert_action: Option<CleanupAction>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]

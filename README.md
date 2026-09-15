@@ -1,11 +1,33 @@
-# Clean Any
+<p align="center">
+  <p align="center">
+    <img src="./gui/resources/app/icon.png" alt="Preview" width="128" />
+  </p>
+  <h1 align="center"><b>Clean the Agent</b></h1>
+  <p align="center">
+    A conservative cleanup tool for artifacts and configuration changes left by developer tools.
+    <br />
+    <br />
+    <b>Download for </b>
+    <del>
+    <i>
+    macOS
+    ·
+    Windows
+    ·
+    Linux
+    </i>
+    </del>
+    <br />
+  </p>
+</p>
 
-Clean Any is a cross-platform Rust CLI that detects and removes artifacts and
-configuration mutations left by developer tools. It also offers explicitly
-selected preference tweaks for product behavior that is undesirable but is not
-garbage. Orca is the reference cleanup provider. Product knowledge stays behind
-small provider and tweak traits; the shared engine only plans and applies typed
-actions.
+## Motivation
+
+Clean the Agent was created to address the problem of leftover artifacts and configuration changes from developer tools. These remnants can clutter the development environment, cause conflicts, and lead to unexpected behavior. 
+
+By providing a conservative cleanup approach, the tool ensures that only safe and necessary actions are taken, minimizing the risk of disrupting the developer's workflow.
+
+## Overview
 
 The workflow is deliberately staged:
 
@@ -13,14 +35,16 @@ The workflow is deliberately staged:
 detect -> inspect -> classify and explain -> plan -> apply
 ```
 
-Detection is read-only. `clean` is a dry run unless both `--apply` and `--yes`
-are supplied.
+Detection is read-only. `clean` is a dry run unless `--apply` is supplied.
+Interactive applies show the plan and use the same confirmation prompt for
+cleanup and tweaks. Non-interactive callers must also pass `--yes`.
 
 ## Project Map
 
 | Area | Location | Responsibility |
 | --- | --- | --- |
-| CLI | [`src/main.rs`](./src/main.rs) | Select providers and roots, render reports, and enforce explicit apply confirmation. |
+| CLI | [`src/main.rs`](./src/main.rs), [`src/cli_interactive.rs`](./src/cli_interactive.rs), [`src/cli_output.rs`](./src/cli_output.rs) | Parse commands, run guided prompts, and send cleanup and tweak results through one human/JSON presentation pipeline. |
+| Desktop GUI | [`gui`](./gui) | Provide a native macOS workflow for scanning, reviewing plans, applying cleanup, and managing tweaks. |
 | Provider contract | [`src/provider.rs`](./src/provider.rs) | Define the read-only `Provider` trait, platform context, and local/WSL/SSH home scopes. |
 | Finding model | [`src/model.rs`](./src/model.rs) | Represent ownership, safety, evidence, scope, snapshots, plans, and typed actions. |
 | Engine | [`src/engine.rs`](./src/engine.rs) | Run providers, exclude review-gated actions by default, order dependencies, and report results. |
@@ -35,14 +59,37 @@ Build, scan, and inspect the automatic cleanup plan:
 
 ```console
 cargo build
+cargo run
 cargo run -- scan
 cargo run -- clean
 ```
 
+Running without a subcommand opens a searchable terminal menu for scanning,
+cleaning safe artifacts, or applying a preference tweak. The same menu is
+available explicitly with `clean-the-agent interactive`. Use the arrow keys or type
+to filter, press Enter to select, and press Esc to cancel.
+
+The previous `clean-any` executable remains available as a compatibility alias.
+
+Run the native macOS GUI:
+
+```console
+cd gui
+bun install
+bun run dev
+```
+
+The GUI scans the current home or a folder selected with the native macOS open
+panel. It presents supported artifact categories before scanning, lets users
+scope the cleanup plan, shows findings in a list-detail view, keeps
+review-required items excluded by default, confirms cleanup in a native sheet,
+and reports partial apply failures. The Tweaks view exposes the same explicit
+preference recipes as the CLI.
+
 Apply only the automatic plan after reviewing it:
 
 ```console
-cargo run -- clean --apply --yes
+cargo run -- clean --apply
 ```
 
 Consequential state, including live worktrees, backups, terminal history,
@@ -50,11 +97,13 @@ diverged copies, and live trust entries, requires a second opt-in:
 
 ```console
 cargo run -- clean --include-review
-cargo run -- clean --include-review --apply --yes
+cargo run -- clean --include-review --apply
 ```
 
-Use `--json` for machine-readable output. Explicit roots support fixtures,
-mounted homes, WSL distributions, and mounted SSH filesystems:
+Use `--verbose` to include ownership, scope, and detection evidence. Use
+`--json` for machine-readable output; `--json --apply` requires `--yes` because
+JSON output cannot prompt. Explicit roots support fixtures, mounted homes, WSL
+distributions, and mounted SSH filesystems:
 
 ```console
 cargo run -- --home /mounted/home scan --json
@@ -72,7 +121,7 @@ writes the same null-binding form used by Codex:
 ```console
 cargo run -- tweaks
 cargo run -- tweak codex.disable-pet-shortcut
-cargo run -- tweak codex.disable-pet-shortcut --apply --yes
+cargo run -- tweak codex.disable-pet-shortcut --apply
 ```
 
 The tweak resolves `$CODEX_HOME/keybindings.json`, or
@@ -95,7 +144,7 @@ on the remote host itself.
 | JSON and JSONC mutations | Structurally removes exact Orca commands from Claude Code, OpenClaude, Codex hooks, Cursor, Gemini, Antigravity, Droid/Factory, Command Code, Copilot, Grok, and Devin. JSONC comments are retained. Orca-named Copilot and Grok hook files are removed only when no unrelated content remains. |
 | Trust state | Correlates Cursor markers, Copilot `trustedFolders`, and Codex TOML project trust with Orca workspace provenance. Missing workspaces are automatic; live workspace trust requires review. Codex hook trust blocks must reference Orca's hook directory. |
 | Other integrations | Removes Kimi's bounded managed TOML block, the marked Amp plugin, and the marked Hermes plugin while disabling only `orca-status` in Hermes YAML. Kimi and Hermes `.bak` files require review. Environment-specific homes are honored for the current user. |
-| Skills | Uses Orca skill receipts plus canonical `.agents/skills` topology to find provider links and fallback copies across Claude, Cursor, Gemini, Factory, Continue, Trae, Grok, and Augment roots. Diverged or unreceipted copies are not automatic. |
+| Skills | Attributes only provider links and copies whose `skills` v3 lock entry names `stablyai/orca` and whose Git tree hash matches Orca's versioned skill registry through 1.4.197. Personal skills, metadata, generic Orca install receipts, modified copies, and unknown revisions are left untouched. A newer observed Orca version produces a coverage warning. |
 | WSL and SSH | Scans explicitly supplied home scopes, including mirrored workspace trash, remote agent configuration, remote hook scripts, and versioned `.orca-remote/relay-*` and `orcad-*` state. Reports retain the scope. |
 | MCP files | `.mcp.json`, `.cursor/mcp.json`, `.claude.json`, and `.claude/mcp.json` are intentionally outside Orca cleanup because their creation is explicit user state. |
 
@@ -157,3 +206,10 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 ```
+
+
+## Author
+
+Clean the Agent © Wibus, Released under MIT. Created on Sep 15, 2026
+
+> [Personal Website](http://wibus.ren/) · [Blog](https://blog.wibus.ren/) · GitHub [@wibus-wee](https://github.com/wibus-wee/) · Telegram [@wibus✪](https://t.me/wibus_wee)

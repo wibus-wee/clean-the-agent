@@ -39,9 +39,10 @@ impl Tweak for DisableCodexPetShortcut {
                     disabled_keymap(&[]),
                     1,
                 )),
+                None,
             ),
             Ok(Some((path, bytes))) => inspect_existing(&path, &bytes),
-            Err(detail) => report(&configured_path, TweakStatus::Blocked, &detail, None),
+            Err(detail) => report(&configured_path, TweakStatus::Blocked, &detail, None, None),
         }
     }
 }
@@ -75,7 +76,7 @@ fn read_existing(path: &Path) -> Result<Option<(PathBuf, Vec<u8>)>, String> {
 fn inspect_existing(path: &Path, bytes: &[u8]) -> TweakReport {
     let bindings = match parse_keymap(path, bytes) {
         Ok(bindings) => bindings,
-        Err(detail) => return report(path, TweakStatus::Blocked, &detail, None),
+        Err(detail) => return report(path, TweakStatus::Blocked, &detail, None, None),
     };
     let pet_bindings = bindings
         .iter()
@@ -87,6 +88,11 @@ fn inspect_existing(path: &Path, bytes: &[u8]) -> TweakReport {
             TweakStatus::Satisfied,
             "Codex Pet already has an explicit null keyboard binding",
             None,
+            Some(revert_action(
+                path.to_owned(),
+                sha256_bytes(bytes),
+                enabled_keymap(&bindings),
+            )),
         );
     }
 
@@ -102,6 +108,7 @@ fn inspect_existing(path: &Path, bytes: &[u8]) -> TweakReport {
             replacement,
             mutation_count,
         )),
+        None,
     )
 }
 
@@ -156,6 +163,20 @@ fn disabled_keymap(bindings: &[Value]) -> Vec<u8> {
     bytes
 }
 
+fn enabled_keymap(bindings: &[Value]) -> Vec<u8> {
+    let replacement = bindings
+        .iter()
+        .filter(|binding| {
+            binding.get("command").and_then(Value::as_str) != Some(COMMAND)
+                || !binding.get("key").is_some_and(Value::is_null)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut bytes = serde_json::to_vec_pretty(&replacement).expect("JSON values always serialize");
+    bytes.push(b'\n');
+    bytes
+}
+
 fn action(
     path: PathBuf,
     expected: FilePrecondition,
@@ -180,11 +201,31 @@ fn action(
     }
 }
 
+fn revert_action(path: PathBuf, expected_sha256: String, replacement: Vec<u8>) -> CleanupAction {
+    CleanupAction {
+        id: "tweak-codex-enable-pet-shortcut".to_owned(),
+        provider: "codex".to_owned(),
+        description: "Restore the Codex Pet keyboard shortcut".to_owned(),
+        path,
+        scope: ScopeKind::Local,
+        safety: Safety::ReviewRequired,
+        reclaimable_bytes: 0,
+        kind: CleanupActionKind::RewriteFile {
+            expected_sha256,
+            mutation_count: 1,
+            format: FileFormat::Json,
+            replacement,
+        },
+        depends_on: Vec::new(),
+    }
+}
+
 fn report(
     path: &Path,
     status: TweakStatus,
     detail: &str,
     action: Option<CleanupAction>,
+    revert_action: Option<CleanupAction>,
 ) -> TweakReport {
     let summary = DisableCodexPetShortcut.summary();
     TweakReport {
@@ -195,7 +236,8 @@ fn report(
         status,
         path: path.to_owned(),
         detail: detail.to_owned(),
-        restart_required: action.is_some(),
+        restart_required: action.is_some() || revert_action.is_some(),
         action,
+        revert_action,
     }
 }

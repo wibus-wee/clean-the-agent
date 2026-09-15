@@ -1,0 +1,26 @@
+[package]
+name = "clean-the-agent-gui"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[dependencies]
+clean-any = { package = "clean-the-agent", path = ".." }
+quickgui = "0.1.4-next.4"
+
+[dev-dependencies]
+quickgui = { version = "0.1.4-next.4", features = ["test-support"] }
+
+[profile.dev]
+opt-level = 3
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# Keep the desktop application independent of the parent CLI package.
+[workspace]

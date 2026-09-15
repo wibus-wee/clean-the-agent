@@ -141,7 +141,7 @@ pub struct CleanupPlan {
     pub reclaimable_bytes: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApplyStatus {
     Applied,

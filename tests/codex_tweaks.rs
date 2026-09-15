@@ -120,6 +120,79 @@ fn null_pet_binding_is_idempotent() {
 
     assert_eq!(report.status, TweakStatus::Satisfied);
     assert!(report.action.is_none());
+    assert!(report.revert_action.is_some());
+}
+
+#[test]
+fn turning_tweak_off_removes_only_the_null_pet_binding() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let path = home.join(".codex/keybindings.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&json!([
+            {"command": "openAvatarOverlay", "key": null},
+            {"command": "otherCommand", "key": "Command+O", "future": true}
+        ]))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let report = engine()
+        .inspect("codex.disable-pet-shortcut", &context(&home))
+        .unwrap();
+    let result = Engine::apply(&CleanupPlan {
+        actions: vec![
+            report
+                .revert_action
+                .expect("applied tweak can be turned off"),
+        ],
+        excluded_review_findings: 0,
+        reclaimable_bytes: 0,
+    });
+
+    assert!(!result.has_failures());
+    assert_eq!(
+        read_keymap(&path),
+        vec![json!({
+            "command": "otherCommand",
+            "key": "Command+O",
+            "future": true
+        })]
+    );
+}
+
+#[test]
+fn turning_tweak_off_rejects_a_keymap_changed_after_inspection() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let path = home.join(".codex/keybindings.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, br#"[{"command":"openAvatarOverlay","key":null}]"#).unwrap();
+    let report = engine()
+        .inspect("codex.disable-pet-shortcut", &context(&home))
+        .unwrap();
+    fs::write(
+        &path,
+        br#"[{"command":"openAvatarOverlay","key":null},{"command":"newCommand","key":"Command+N"}]"#,
+    )
+    .unwrap();
+
+    let result = Engine::apply(&CleanupPlan {
+        actions: vec![
+            report
+                .revert_action
+                .expect("applied tweak can be turned off"),
+        ],
+        excluded_review_findings: 0,
+        reclaimable_bytes: 0,
+    });
+
+    assert!(result.results.iter().any(|item| {
+        matches!(item.status, ApplyStatus::Failed) && item.detail.contains("changed")
+    }));
+    assert_eq!(read_keymap(&path)[1]["command"], "newCommand");
 }
 
 #[test]

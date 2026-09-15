@@ -1,0 +1,16 @@
+{
+  "name": "clean-the-agent-gui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "quickgui dev",
+    "build": "quickgui build",
+    "check": "quickgui check",
+    "test": "quickgui test",
+    "fmt": "quickgui fmt"
+  },
+  "devDependencies": {
+    "@quickgui/cli": "^0.1.4-next.4",
+    "geist": "^1.7.2"
+  }
+}

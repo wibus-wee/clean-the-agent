@@ -271,7 +271,7 @@ fn orphaned_workspace_trust_and_state_are_removed_without_touching_user_entries(
 
 #[cfg(unix)]
 #[test]
-fn runtime_skill_and_remote_scopes_require_verifiable_ownership() {
+fn runtime_and_remote_scopes_require_verifiable_ownership() {
     use std::os::unix::fs::symlink;
 
     let fixture = TempDir::new().unwrap();
@@ -281,6 +281,16 @@ fn runtime_skill_and_remote_scopes_require_verifiable_ownership() {
     write(&canonical.join("SKILL.md"), "skill");
     fs::create_dir_all(home.join(".claude/skills")).unwrap();
     symlink(&canonical, home.join(".claude/skills/demo")).unwrap();
+    write_json(
+        &home.join(".orca/skill-installs/receipts/demo.json"),
+        json!({
+            "schemaVersion": 1,
+            "placements": [{
+                "status": "installed",
+                "path": home.join(".claude/skills/demo")
+            }]
+        }),
+    );
     write(&home.join(".codex/prompts/prompt.md"), "prompt");
     fs::create_dir_all(home.join(".orca/codex-runtime-home/home")).unwrap();
     symlink(
@@ -307,10 +317,15 @@ fn runtime_skill_and_remote_scopes_require_verifiable_ownership() {
     let scan = engine().scan(&context, &[]).unwrap();
     let automatic = Engine::plan(&scan, false);
     assert!(
-        automatic
+        !automatic
             .actions
             .iter()
             .any(|action| action.path == home.join(".claude/skills/demo"))
+    );
+    assert!(
+        scan.findings
+            .iter()
+            .all(|finding| finding.kind != ArtifactKind::SkillPlacement)
     );
     assert!(
         automatic
@@ -329,6 +344,174 @@ fn runtime_skill_and_remote_scopes_require_verifiable_ownership() {
     }));
     assert!(automatic.actions.iter().any(|action| {
         action.scope == ScopeKind::SshRemote && action.path == remote.join(".orca-remote/relay-v1")
+    }));
+}
+
+#[cfg(unix)]
+#[test]
+fn personal_skill_locks_receipts_and_metadata_are_not_attributed_to_orca() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let linked_skill = home.join(".agents/skills/clear-docs-comments");
+    let copied_skill = home.join(".agents/skills/improve");
+    write(&linked_skill.join("SKILL.md"), "linked personal skill");
+    write(&copied_skill.join("SKILL.md"), "copied personal skill");
+    write(&home.join(".agents/skills/.DS_Store"), "metadata");
+    fs::create_dir_all(home.join(".claude/skills")).unwrap();
+    symlink(
+        &linked_skill,
+        home.join(".claude/skills/clear-docs-comments"),
+    )
+    .unwrap();
+    write(
+        &home.join(".claude/skills/improve/SKILL.md"),
+        "copied personal skill",
+    );
+    write(&home.join(".claude/skills/.DS_Store"), "metadata");
+    write_json(
+        &home.join(".agents/.skill-lock.json"),
+        json!({
+            "version": 3,
+            "skills": {
+                "clear-docs-comments": {
+                    "source": "wibus-wee/SKILL",
+                    "sourceType": "github",
+                    "sourceUrl": "https://github.com/wibus-wee/SKILL.git",
+                    "skillPath": "skills/dev/clear-docs-comments/SKILL.md",
+                    "skillFolderHash": "51470b1ba6be966f8e283878b30ca5e1f7f141de"
+                },
+                "improve": {
+                    "source": "shadcn/improve",
+                    "sourceType": "github",
+                    "sourceUrl": "https://github.com/shadcn/improve.git",
+                    "skillPath": "skills/improve/SKILL.md",
+                    "skillFolderHash": "7d77d76815e6deb704427f17f6e393f55e3cb6da"
+                }
+            }
+        }),
+    );
+    write_json(
+        &home.join(".orca/skill-installs/receipts/clear-docs-comments.json"),
+        json!({
+            "schemaVersion": 1,
+            "placements": [{
+                "status": "installed",
+                "path": home.join(".claude/skills/clear-docs-comments")
+            }]
+        }),
+    );
+
+    let scan = engine().scan(&context(&home), &[]).unwrap();
+
+    assert!(
+        scan.findings
+            .iter()
+            .all(|finding| finding.kind != ArtifactKind::SkillPlacement)
+    );
+    assert!(scan.warnings.is_empty(), "{:#?}", scan.warnings);
+}
+
+#[cfg(unix)]
+#[test]
+fn version_matched_official_skill_alias_is_automatic() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let canonical = home.join(".agents/skills/computer-use");
+    write(
+        &canonical.join("SKILL.md"),
+        include_bytes!("fixtures/orca-skills/computer-use/SKILL.md"),
+    );
+    fs::create_dir_all(home.join(".claude/skills")).unwrap();
+    symlink(&canonical, home.join(".claude/skills/computer-use")).unwrap();
+    write_json(
+        &home.join(".agents/.skill-lock.json"),
+        json!({
+            "version": 3,
+            "skills": {
+                "computer-use": {
+                    "source": "stablyai/orca",
+                    "sourceType": "github",
+                    "sourceUrl": "https://github.com/stablyai/orca.git",
+                    "skillPath": "skills/computer-use/SKILL.md",
+                    "skillFolderHash": "fab1436f0d73889492279544eadebc9bcc2694b6"
+                }
+            }
+        }),
+    );
+
+    let scan = engine().scan(&context(&home), &[]).unwrap();
+    let finding = scan
+        .findings
+        .iter()
+        .find(|finding| finding.kind == ArtifactKind::SkillPlacement)
+        .unwrap();
+
+    assert_eq!(finding.path, home.join(".claude/skills/computer-use"));
+    assert_eq!(finding.safety, Safety::Automatic);
+    assert!(finding.evidence.contains("revision 9"));
+    assert!(finding.evidence.contains("Orca 1.4.197"));
+}
+
+#[cfg(unix)]
+#[test]
+fn unknown_official_revision_is_warned_and_left_untouched() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    let canonical = home.join(".agents/skills/orca-cli");
+    write(&canonical.join("SKILL.md"), "future official skill");
+    fs::create_dir_all(home.join(".claude/skills")).unwrap();
+    symlink(&canonical, home.join(".claude/skills/orca-cli")).unwrap();
+    write_json(
+        &home.join(".agents/.skill-lock.json"),
+        json!({
+            "version": 3,
+            "skills": {
+                "orca-cli": {
+                    "source": "stablyai/orca",
+                    "sourceType": "github",
+                    "sourceUrl": "https://github.com/stablyai/orca.git",
+                    "skillPath": "skills/orca-cli/SKILL.md",
+                    "skillFolderHash": "ffffffffffffffffffffffffffffffffffffffff"
+                }
+            }
+        }),
+    );
+
+    let scan = engine().scan(&context(&home), &[]).unwrap();
+
+    assert!(
+        scan.findings
+            .iter()
+            .all(|finding| finding.kind != ArtifactKind::SkillPlacement)
+    );
+    assert!(scan.warnings.iter().any(|warning| {
+        warning.contains("unrecognized source revision")
+            && warning.contains("knowledge ends at Orca 1.4.197")
+            && warning.contains("left untouched")
+    }));
+}
+
+#[test]
+fn newer_orca_version_warns_that_coverage_may_be_incomplete() {
+    let fixture = TempDir::new().unwrap();
+    let home = fixture.path().join("home");
+    write_json(
+        &home.join(".orca/daemon/daemon-v36.pid"),
+        json!({"pid": 42, "startedAtMs": 1, "appVersion": "1.4.198"}),
+    );
+
+    let scan = engine().scan(&context(&home), &[]).unwrap();
+
+    assert!(scan.warnings.iter().any(|warning| {
+        warning.contains("observed Orca 1.4.198")
+            && warning.contains("newer than this detector's 1.4.197")
+            && warning.contains("may not cover every artifact")
     }));
 }
 

@@ -1,87 +1,12 @@
-//! Shared visual primitives for Clean the Agent's Geist-inspired macOS interface.
+//! Reusable visual primitives for the application interface.
 
 use std::time::Duration;
 
+use super::{CONTROL_HEIGHT, PANEL_RADIUS, RADIUS, SIDEBAR_WIDTH, TOOLBAR_HEIGHT, Theme};
 use quickgui::{
-    ClickListener, Color, ColorScheme, Element, Image, IntoElement, SystemColorRole,
-    SystemPreferences, Transform2D, Transition, TransitionProperties, ViewContext, button,
-    checkbox, div, img, text,
+    ClickListener, Color, Element, Image, IntoElement, Transform2D, Transition,
+    TransitionProperties, button, checkbox, div, img, text,
 };
-
-pub const SIDEBAR_WIDTH: f32 = 232.0;
-pub const TOOLBAR_HEIGHT: f32 = 64.0;
-pub const CONTROL_HEIGHT: f32 = 36.0;
-pub const RADIUS: f32 = 10.0;
-pub const PANEL_RADIUS: f32 = 16.0;
-
-#[derive(Clone, Copy)]
-pub struct Theme {
-    pub dark: bool,
-    pub window: Color,
-    pub sidebar: Color,
-    pub control: Color,
-    pub control_hover: Color,
-    pub text: Color,
-    pub secondary_text: Color,
-    pub separator: Color,
-    pub accent: Color,
-    pub accent_text: Color,
-    pub selection: Color,
-    pub selection_text: Color,
-    pub danger: Color,
-    pub warning: Color,
-    pub success: Color,
-}
-
-impl Theme {
-    pub fn from_context<V: 'static>(cx: &mut ViewContext<'_, V>) -> Self {
-        Self::from_preferences(cx.system_preferences())
-    }
-
-    fn from_preferences(preferences: SystemPreferences) -> Self {
-        let semantic = |role, fallback| {
-            preferences.system_color(role).map_or(fallback, |color| {
-                Color::rgba8(color.red, color.green, color.blue, color.alpha)
-            })
-        };
-        match preferences.color_scheme() {
-            ColorScheme::Dark => Self {
-                dark: true,
-                window: semantic(SystemColorRole::WindowBackground, Color::rgb8(30, 30, 30)),
-                sidebar: semantic(SystemColorRole::ControlBackground, Color::rgb8(36, 36, 38)),
-                control: Color::rgb8(39, 39, 39),
-                control_hover: Color::rgb8(46, 46, 46),
-                text: semantic(SystemColorRole::WindowText, Color::rgb8(245, 245, 247)),
-                secondary_text: Color::rgb8(154, 154, 154),
-                separator: Color::rgb8(52, 52, 52),
-                accent: semantic(SystemColorRole::WindowText, Color::rgb8(245, 245, 247)),
-                accent_text: semantic(SystemColorRole::WindowBackground, Color::rgb8(30, 30, 30)),
-                selection: Color::rgb8(70, 70, 70),
-                selection_text: semantic(SystemColorRole::WindowText, Color::rgb8(245, 245, 247)),
-                danger: Color::rgb8(255, 97, 102),
-                warning: Color::rgb8(245, 166, 35),
-                success: Color::rgb8(70, 167, 88),
-            },
-            ColorScheme::Light | ColorScheme::Unknown => Self {
-                dark: false,
-                window: Color::rgb8(255, 255, 255),
-                sidebar: Color::rgb8(250, 250, 250),
-                control: Color::rgb8(255, 255, 255),
-                control_hover: Color::rgb8(245, 245, 245),
-                text: Color::rgb8(23, 23, 23),
-                secondary_text: Color::rgb8(102, 102, 102),
-                separator: Color::rgb8(234, 234, 234),
-                accent: Color::rgb8(23, 23, 23),
-                accent_text: Color::rgb8(255, 255, 255),
-                selection: Color::rgb8(235, 235, 235),
-                selection_text: Color::rgb8(23, 23, 23),
-                danger: Color::rgb8(238, 0, 0),
-                warning: Color::rgb8(173, 92, 0),
-                success: Color::rgb8(0, 112, 51),
-            },
-        }
-    }
-}
 
 pub fn sidebar() -> Element {
     div()
@@ -339,6 +264,7 @@ pub fn review_checkbox<V>(
 
 pub fn status_badge(label: &str, color: Color, theme: Theme) -> Element {
     div()
+        .flex_none()
         .px_2()
         .py_1()
         .rounded_full()
@@ -359,12 +285,12 @@ pub fn category_tile<V>(
     theme: Theme,
 ) -> Element {
     button()
-        .min_w(180.0)
-        .min_h(148.0)
+        .min_w(300.0)
+        .min_h(96.0)
         .flex_grow(1.0)
-        .flex_basis(180.0)
-        .p_4()
-        .rounded(14.0)
+        .flex_basis(340.0)
+        .p_3()
+        .rounded(12.0)
         .border(1.0, theme.separator)
         .bg(if selected {
             theme.sidebar
@@ -374,7 +300,7 @@ pub fn category_tile<V>(
         .flex_col()
         .items_start()
         .justify_between()
-        .gap_3()
+        .gap_2()
         .text_left()
         .cursor_pointer()
         .hover(|style| style.bg(theme.control_hover))
@@ -424,19 +350,6 @@ pub fn category_tile<V>(
                 .font_medium()
                 .text_color(theme.secondary_text),
         )
-}
-
-pub fn detail_group(label: &str, value: &str, theme: Theme) -> Element {
-    div()
-        .flex_col()
-        .gap_1()
-        .child(
-            text(label)
-                .text_size(12.0)
-                .font_medium()
-                .text_color(theme.secondary_text),
-        )
-        .child(text(value).text_size(14.0).line_height(20.0))
 }
 
 pub fn empty_state(title: &str, detail: &str, theme: Theme) -> Element {

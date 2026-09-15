@@ -165,20 +165,22 @@ pub(crate) fn inspect(context: &ScanContext, report: &mut ScanReport) {
 }
 
 fn grok_config(context: &ScanContext, scope: &HomeScope) -> PathBuf {
-    if scope.kind == crate::model::ScopeKind::Local && context.honor_environment {
-        if let Some(home) = context.environment_path("GROK_HOME") {
-            return home.join("hooks/orca-status.json");
-        }
+    if scope.kind == crate::model::ScopeKind::Local
+        && context.honor_environment
+        && let Some(home) = context.environment_path("GROK_HOME")
+    {
+        return home.join("hooks/orca-status.json");
     }
     scope.home.join(".grok/hooks/orca-status.json")
 }
 
 fn devin_config(context: &ScanContext, scope: &HomeScope) -> PathBuf {
     if context.platform == Platform::Windows {
-        if scope.kind == crate::model::ScopeKind::Local && context.honor_environment {
-            if let Some(app_data) = context.environment_path("APPDATA") {
-                return app_data.join("devin/config.json");
-            }
+        if scope.kind == crate::model::ScopeKind::Local
+            && context.honor_environment
+            && let Some(app_data) = context.environment_path("APPDATA")
+        {
+            return app_data.join("devin/config.json");
         }
         return scope.home.join("AppData/Roaming/devin/config.json");
     }
@@ -199,25 +201,23 @@ fn inspect_spec(
     };
     let mut mutations = 0;
     for container in spec.containers {
-        if let Some(property) = object.get(container) {
-            if let Some(events) = property.value().and_then(|value| value.as_object()) {
-                mutations += clean_events(&events, spec.markers);
-                if events.properties().is_empty() && *container != "hooks" {
-                    property.remove();
-                }
+        if let Some(property) = object.get(container)
+            && let Some(events) = property.value().and_then(|value| value.as_object())
+        {
+            mutations += clean_events(&events, spec.markers);
+            if events.properties().is_empty() && *container != "hooks" {
+                property.remove();
             }
         }
     }
-    if spec.status_line {
-        if let Some(property) = object.get("statusLine") {
-            if property
-                .value()
-                .is_some_and(|value| node_has_managed_command(&value, spec.markers))
-            {
-                property.remove();
-                mutations += 1;
-            }
-        }
+    if spec.status_line
+        && let Some(property) = object.get("statusLine")
+        && property
+            .value()
+            .is_some_and(|value| node_has_managed_command(&value, spec.markers))
+    {
+        property.remove();
+        mutations += 1;
     }
     if mutations == 0 {
         return;

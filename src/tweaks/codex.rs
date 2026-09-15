@@ -48,10 +48,10 @@ impl Tweak for DisableCodexPetShortcut {
 }
 
 fn codex_home(context: &ScanContext) -> PathBuf {
-    if context.honor_environment {
-        if let Some(path) = context.environment_path("CODEX_HOME") {
-            return path;
-        }
+    if context.honor_environment
+        && let Some(path) = context.environment_path("CODEX_HOME")
+    {
+        return path;
     }
     context.home.join(".codex")
 }

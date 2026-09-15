@@ -365,6 +365,7 @@ fn orca_created_worktree_requires_review_opt_in() {
 
 fn git(directory: &Path, arguments: &[&str]) {
     let output = Command::new("git")
+        .args(["-c", "commit.gpgsign=false"])
         .arg("-C")
         .arg(directory)
         .args(arguments)

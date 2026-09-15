@@ -543,10 +543,11 @@ fn environment_home(
     variable: &str,
     fallback: &str,
 ) -> PathBuf {
-    if scope.kind == crate::model::ScopeKind::Local && context.honor_environment {
-        if let Some(path) = context.environment_path(variable) {
-            return path;
-        }
+    if scope.kind == crate::model::ScopeKind::Local
+        && context.honor_environment
+        && let Some(path) = context.environment_path(variable)
+    {
+        return path;
     }
     scope.home.join(fallback)
 }

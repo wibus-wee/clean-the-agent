@@ -28,7 +28,7 @@ body:
     id: platform
     attributes:
       label: Operating system
-      placeholder: macOS 14.7 arm64, Ubuntu 24.04 x86-64, or Windows 11 x86-64
+      placeholder: macOS 14.7 arm64 or Ubuntu 24.04 x86-64
     validations:
       required: true
   - type: textarea

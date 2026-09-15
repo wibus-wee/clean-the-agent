@@ -10,8 +10,6 @@
     <b>Download for </b>
     <a href="https://github.com/wibus-wee/clean-the-agent/releases/latest">macOS</a>
     ·
-    <a href="https://github.com/wibus-wee/clean-the-agent/releases/latest">Windows</a>
-    ·
     <a href="https://github.com/wibus-wee/clean-the-agent/releases/latest">Linux</a>
     <br />
   </p>
@@ -122,7 +120,7 @@ bun run test
 bun run build -- --sign -
 ```
 
-Pull requests build and test the CLI on macOS, Linux, and Windows, check the
+Pull requests build and test the CLI on macOS and Linux, check the
 declared minimum Rust version, and package the macOS GUI. See the
 [GUI architecture guide](./gui/README.md) for its code map and requirements.
 

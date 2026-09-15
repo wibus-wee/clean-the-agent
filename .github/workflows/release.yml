@@ -99,19 +99,12 @@ jobs:
           - os: ubuntu-latest
             rust_target: x86_64-unknown-linux-gnu
             asset_target: linux-x64
-            archive: tar.gz
           - os: macos-14
             rust_target: aarch64-apple-darwin
             asset_target: darwin-arm64
-            archive: tar.gz
           - os: macos-14
             rust_target: x86_64-apple-darwin
             asset_target: darwin-x64
-            archive: tar.gz
-          - os: windows-latest
-            rust_target: x86_64-pc-windows-msvc
-            asset_target: windows-x64
-            archive: zip
     steps:
       - name: Check out the tagged source
         uses: actions/checkout@v7
@@ -129,8 +122,7 @@ jobs:
         shell: bash
         run: cargo +stable build --locked --release --bins --target "${{ matrix.rust_target }}"
 
-      - name: Package Unix CLI binaries
-        if: runner.os != 'Windows'
+      - name: Package CLI binaries
         shell: bash
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -148,19 +140,6 @@ jobs:
           fi
           cp LICENSE README.md "staging/$asset/"
           tar -czf "release/$asset.tar.gz" -C staging "$asset"
-
-      - name: Package Windows CLI binaries
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          $asset = "clean-the-agent-v$env:VERSION-${{ matrix.asset_target }}"
-          New-Item -ItemType Directory -Force "staging/$asset", release | Out-Null
-          Copy-Item "target/${{ matrix.rust_target }}/release/clean-the-agent.exe" "staging/$asset/"
-          Copy-Item "target/${{ matrix.rust_target }}/release/clean-any.exe" "staging/$asset/"
-          Copy-Item LICENSE, README.md "staging/$asset/"
-          Compress-Archive -Path "staging/$asset" -DestinationPath "release/$asset.zip"
 
       - name: Upload CLI package
         uses: actions/upload-artifact@v7

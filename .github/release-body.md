@@ -7,7 +7,6 @@
 | `clean-the-agent-@TAG@-darwin-arm64.tar.gz` | macOS CLI, Apple silicon |
 | `clean-the-agent-@TAG@-darwin-x64.tar.gz` | macOS CLI, Intel |
 | `clean-the-agent-@TAG@-linux-x64.tar.gz` | Linux CLI, x86-64 |
-| `clean-the-agent-@TAG@-windows-x64.zip` | Windows CLI, x86-64 |
 
 `SHA256SUMS.txt` contains the checksum for every package.
 
@@ -87,21 +86,5 @@ install -d "$HOME/.local/bin"
 install -m 0755 "${ARCHIVE%.tar.gz}/clean-the-agent" "$HOME/.local/bin/clean-the-agent"
 ```
 
-Windows PowerShell:
-
-```powershell
-$Tag = "@TAG@"
-$Archive = "clean-the-agent-$Tag-windows-x64.zip"
-$Base = "https://github.com/wibus-wee/clean-the-agent/releases/download/$Tag"
-Invoke-WebRequest "$Base/$Archive" -OutFile $Archive
-Invoke-WebRequest "$Base/SHA256SUMS.txt" -OutFile SHA256SUMS.txt
-$Expected = ((Select-String -Path SHA256SUMS.txt -Pattern ([regex]::Escape($Archive))).Line -split '\s+')[0]
-$Actual = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($Actual -ne $Expected) { throw "SHA-256 mismatch for $Archive" }
-Expand-Archive $Archive -DestinationPath . -Force
-New-Item -ItemType Directory -Force "$HOME\bin" | Out-Null
-Copy-Item "clean-the-agent-$Tag-windows-x64\clean-the-agent.exe" "$HOME\bin\clean-the-agent.exe"
-```
-
-Ensure `$HOME/.local/bin` or `$HOME\bin` is on `PATH`, then run
+Ensure `$HOME/.local/bin` is on `PATH`, then run
 `clean-the-agent --version`.

@@ -22,7 +22,6 @@ body:
       options:
         - macOS
         - Linux
-        - Windows
         - WSL
         - Container or remote environment
         - Other

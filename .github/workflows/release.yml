@@ -311,18 +311,22 @@ jobs:
           if [[ "$PRERELEASE" == "true" ]]; then
             args+=(--prerelease)
           fi
-          gh release create "${args[@]}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            gh release create "${args[@]}"
+          fi
 
       - name: Point beta installs at the newest beta-channel release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.version.outputs.ref }}
         run: |
           set -euo pipefail
           if ! gh release view updater-beta >/dev/null 2>&1; then
+            target_commit="$(git rev-parse HEAD)"
             gh release create updater-beta \
-              --target "$TAG" \
+              --target "$target_commit" \
               --title "Updater metadata · beta channel" \
               --notes "Machine-readable manifests for beta-channel application updates." \
               --prerelease

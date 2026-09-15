@@ -8,15 +8,11 @@
     <br />
     <br />
     <b>Download for </b>
-    <del>
-    <i>
-    macOS
+    <a href="https://github.com/wibus-wee/clean-the-agent/releases/latest">macOS</a>
     ·
-    Windows
+    <a href="https://github.com/wibus-wee/clean-the-agent/releases/latest">Windows</a>
     ·
-    Linux
-    </i>
-    </del>
+    <a href="https://github.com/wibus-wee/clean-the-agent/releases/latest">Linux</a>
     <br />
   </p>
 </p>
